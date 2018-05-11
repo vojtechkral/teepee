@@ -1,0 +1,11 @@
+[package]
+name = "tp-lib"
+version = "0.1.0"
+authors = ["Vojtech Kral <vojtech@kral.hk>"]
+
+[dependencies]
+vte = "0.3"
+error-chain = "0.11"
+
+tp-pty = { path = "../tp-pty" }
+tp-term = { path = "../tp-term" }

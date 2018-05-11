@@ -1,0 +1,9 @@
+[package]
+name = "tp-pty"
+version = "0.1.0"
+authors = ["Vojtech Kral <vojtech@kral.hk>"]
+
+[dependencies]
+libc = "0.2"
+nix = "0.10"
+error-chain = "0.11"

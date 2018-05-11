@@ -1,0 +1,14 @@
+[package]
+name = "teepee"
+version = "0.1.0"
+authors = ["Vojtech Kral <vojtech@kral.hk>"]
+
+[dependencies]
+tp-lib = { path = "ws/tp-lib" }
+
+[workspace]
+members = [
+	"ws/tp-pty",
+	"ws/tp-term",
+	"ws/tp-lib",
+]

@@ -1,0 +1,7 @@
+#!/bin/sh
+
+echo -e 'DCS: \ePThis the content of a DCS escape sequence.\e\\'
+echo -e 'SOS: \eXThis the content of an SOS escape sequence.\e\\'
+echo -e 'OSC: \e]This the content of an OSC escape sequence.\e\\'
+echo -e 'PM: \e^This the content of a PM escape sequence.\e\\'
+echo -e 'APC: \e_This the content of an APC escape sequence.\e\\'
