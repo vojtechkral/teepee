@@ -6,6 +6,7 @@ use utf8;
 // TODO: comment
 // https://vt100.net/emu/dec_ansi_parser
 
+// XXX: OSC may be terminated by bell? (Only in xterm?)
 
 bitflags! {
     pub struct VTRendition: u8 {
@@ -26,7 +27,7 @@ bitflags! {
 
 impl Default for VTRendition {
     fn default() -> VTRendition {
-        VTRendition::from_bits_truncate(0)
+        VTRendition::Dirty    // A sensible default, methinks
     }
 }
 
@@ -128,16 +129,27 @@ impl Default for VTCharset {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum VTErase {
+    All,
+    Above,
+    Below,
+    Line,
+    LineLeft,
+    LineRight,
+    NumChars(u32),
+}
+
 
 #[derive(Debug)]
-struct IntParams {
+struct Params {
     ints: Vec<i32>,
     open: bool,
 }
 
-impl IntParams {
-    fn new() -> IntParams {
-        IntParams {
+impl Params {
+    fn new() -> Params {
+        Params {
             ints: vec![],
             open: false,
         }
@@ -163,7 +175,10 @@ impl IntParams {
     }
 
     fn get(&self, index: usize, default: i32) -> i32 {
-        self.ints.get(index).map(|v| *v).unwrap_or(default)
+        match self.ints.get(index) {
+            Some(0) | None => default,
+            Some(p) => *p,
+        }
     }
 
     fn clear(&mut self) {
@@ -172,12 +187,12 @@ impl IntParams {
     }
 }
 
-impl ops::Deref for IntParams {
+impl ops::Deref for Params {
     type Target = Vec<i32>;
     fn deref(&self) -> &Self::Target { &self.ints }
 }
 
-impl ops::DerefMut for IntParams {
+impl ops::DerefMut for Params {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.ints }
 }
 
@@ -186,7 +201,6 @@ impl ops::DerefMut for IntParams {
 enum State {
     // Text input states
     Ground,
-    // TODO: UTF-8
 
     // Escape sequence states
     Escape,
@@ -205,53 +219,78 @@ enum State {
 
 use self::State::*;
 
-// impl State {
-//     fn executes_c0(&self) -> bool {
-//         match *self {
-//             Ground | Escape | EscapeInterm | CsiEntry | CsiIgnore | CsiParam | CsiInterm => true,
-//             _ => false,
-//         }
-//     }
-// }
-
 #[derive(Debug, Clone, Copy)]
 pub enum VTReport {
-    // TODO: remove stuff we don't support
     AnswerBack,
     PrimaryAttrs,
     SecondaryAttrs,
-    // DeviceStatus,
-    // CursorPos,
-    // VT52Identify,
-    // TermParams0,
-    // TermParams1,
+    DeviceStatus,
+    CursorPos,
+    TermParams0,
+    TermParams1,
 }
 
 pub trait VTScreen {
-    fn putc(&mut self, c: char);
-
+    /// Insert a unicode charater
+    fn put_char(&mut self, ch: char);
+    /// Insert `num` default (empty) characters
+    fn put_chars(&mut self, num: u32);
     fn newline(&mut self);
-    fn tab(&mut self, tabs: i32);
     fn bell(&mut self);
+    fn index(&mut self, forward: bool);
+    fn next_line(&mut self);
+    /// Performs an erase operation pertaining to current cursor location.
+    /// See `VTErase`.
+    fn erase(&mut self, erase: VTErase);
+
+    /// Move cursor to the next tab stop
+    fn tab(&mut self, tabs: i32);
+    fn tab_set(&mut self, tab: bool);
+    fn tabs_clear(&mut self);
+
+    fn reset(&mut self);
+    fn resize(&mut self, cols: u32, rows: u32);
+
+    /// Scroll screen or the scrolling region if any.
+    /// Positive `num` is for scrolling up, negative for scrolling down.
+    fn scroll(&mut self, num: i32);
+
+    /// Scroll between current line and the bottom of the screen or the scrolling region if any.
+    /// If current line is outside of the scrolling region, there is no effect.
+    /// Positive `num` is for scrolling up, negative for scrolling down.
+    fn scroll_at_cursor(&mut self, num: i32);
+
+    /// Set scrolling region.
+    /// `top` should be at least `1`, `bottom` should be strictly larger than `top`,
+    /// and `top` should be within screen's height.
+    /// If those conditions are not met, apply the default action - reseting the scroll region to the whole screen.
+    /// Note that `1` means "the first line" (ie. 1-indexing).
+    fn set_scroll_region(&mut self, top: u32, bottom: u32);
 
     fn set_mode(&mut self, mode: VTMode, enable: bool);
     fn set_rendition(&mut self, rend: VTRendition, enable: bool);
     fn set_fg(&mut self, color: VTColor);
     fn set_bg(&mut self, color: VTColor);
 
-    fn charset_use(&mut self, slot: u8);
-    fn charset_designate(&mut self, slot: u8, charset: VTCharset);
+    fn charset_use(&mut self, slot: u32);
+    fn charset_designate(&mut self, slot: u32, charset: VTCharset);
 
-    fn index(&mut self, forward: bool);
-    fn next_line(&mut self);
-    fn tab_set(&mut self, tab: bool);
-    fn alignment_test(&mut self);
-    fn reset(&mut self);
-
-    fn cursor_set(&mut self, x: Option<i32>, y: Option<i32>);
+    /// Set cursor absolute position
+    /// Note that the coordinates are 1-indexed.
+    fn cursor_set(&mut self, x: Option<u32>, y: Option<u32>);
+    /// Set cursor relative position
     fn cursor_move(&mut self, x: i32, y: i32);
+    /// Save current cursor data
+    ///
+    /// Saves current cursor's position as well as its style, current character set,
+    /// and the four desginated character set slots into the saved cursor slot.
+    /// Any previous data in the saved cursor slot is overwritten.
     fn cursor_save(&mut self);
+    /// Restores the data saved with `cursor_save()`
     fn cursor_load(&mut self);
+
+    /// "DEC Screen Alignment Test ", actually means the whole screen is filled with `E`s (with default style).
+    fn alignment_test(&mut self);
 }
 
 pub trait VTDispatch {
@@ -272,7 +311,7 @@ pub struct VTParser {
     utf8: utf8::Parser,
     interm1: u8,
     interm2: u8,
-    params: IntParams,
+    params: Params,
 }
 
 #[derive(Debug)]
@@ -289,7 +328,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
     fn clear(&mut self) {
         // Clear the state, checking if for an incomplete UTF-8 parse in progess.
         if self.p.clear().is_err() {
-            self.screen().putc(utf8::REPLACE_CHAR);
+            self.screen().put_char(utf8::REPLACE_CHAR);
         }
     }
 
@@ -322,7 +361,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
             8 /* BS */  => self.screen().cursor_move(-1, 0),
             9 /* HT */  => self.screen().tab(1),
             0xa ... 0xc /* LF, VT, FF */ => self.screen().newline(),
-            0xd /* CR */  => self.screen().cursor_set(Some(0), None),
+            0xd /* CR */  => self.screen().cursor_set(Some(1), None),
             0xe /* SO */  => self.screen().charset_use(1),
             0xf /* SI */  => self.screen().charset_use(0),
             _ => return None,
@@ -333,7 +372,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
 
     fn ground(&mut self, byte: u8) -> State {
         if let Some(res) = self.p.utf8.input(byte) {
-            self.screen().putc(res.unwrap_or(utf8::REPLACE_CHAR));
+            self.screen().put_char(res.unwrap_or(utf8::REPLACE_CHAR));
         }
 
         Ground
@@ -373,7 +412,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         Ground
     }
 
-    fn charset_designate(&mut self, slot: u8, param: u8) {
+    fn charset_designate(&mut self, slot: u32, param: u8) {
         if let Some(charset) = VTCharset::decode(param) {
             self.screen().charset_designate(slot, charset);
         }
@@ -452,6 +491,42 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         }
     }
 
+    fn csi_erase(&mut self, screen: bool) {
+        match (screen, self.p.params.get(0, 0)) {
+            (true, 0) => self.screen().erase(VTErase::Below),
+            (true, 1) => self.screen().erase(VTErase::Above),
+            (true, 2) => self.screen().erase(VTErase::All),
+            (false, 0) => self.screen().erase(VTErase::LineRight),
+            (false, 1) => self.screen().erase(VTErase::LineLeft),
+            (false, 2) => self.screen().erase(VTErase::Line),
+            _ => {},
+        }
+    }
+
+    fn csi_tab(&mut self) {
+        match self.p.params.get(0, 0) {
+            0 => self.screen().tab_set(false),
+            3 => self.screen().tabs_clear(),
+            _ => {},
+        }
+    }
+
+    fn csi_dsr(&mut self) {
+        match self.p.params.get(0, 0) {
+            5 => self.d.report_request(VTReport::DeviceStatus),
+            6 => self.d.report_request(VTReport::CursorPos),
+            _ => {},
+        }
+    }
+
+    fn csi_tparm(&mut self) {
+        match self.p.params.get(0, 0) {
+            0 => self.d.report_request(VTReport::TermParams0),
+            1 => self.d.report_request(VTReport::TermParams1),
+            _ => {},
+        }
+    }
+
     fn csi_dispatch(&mut self, byte: u8) -> State {
         if self.p.interm1 != 0 {
             match (self.p.interm1, byte) {
@@ -471,11 +546,14 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         }
 
         match byte {
+            b'J' => self.csi_erase(true),
+            b'K' => self.csi_erase(false),
+            b'g' => self.csi_tab(),
             b'h' => self.csi_modes(true),
             b'l' => self.csi_modes(false),
-            b'm' => { let _ = self.csi_sgr(); },
-            b'n' => unimplemented!(), // csi_dsr(args_int->value(0, 0)),
-            b'x' => unimplemented!(), // csi_tparm(args_int->value(0, 0)),
+            b'm' => self.csi_sgr(),
+            b'n' => self.csi_dsr(),
+            b'x' => self.csi_tparm(),
             _ => {
                 // The saga continues in the following match.
                 // This is done to make borrowchecker happy because for the rest of CSIs
@@ -487,27 +565,24 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         let params = &self.p.params;
 
         match byte {
-            b'@' => unimplemented!(), // d.screen().insertChars(params.get(0, 1)),
+            b'@' => d.screen().put_chars(params.get(0, 1) as u32),
             b'A' => d.screen().cursor_move(0, -params.get(0, 1)),
             b'B' => d.screen().cursor_move(0,  params.get(0, 1)),
             b'C' => d.screen().cursor_move( params.get(0, 1), 0),
             b'D' => d.screen().cursor_move(-params.get(0, 1), 0),
-            b'G' => d.screen().cursor_set(Some(params.get(0, 1) - 1), None),
-            b'f' | b'H' => d.screen().cursor_set(Some(params.get(1, 1) - 1), Some(params.get(0, 1) - 1)),
+            b'G' => d.screen().cursor_set(Some(params.get(0, 1) as u32), None),
+            b'f' | b'H' => d.screen().cursor_set(Some(params.get(1, 1) as u32), Some(params.get(0, 1) as u32)),
             b'I' => d.screen().tab(params.get(0, 1)),
-            b'J' => unimplemented!(), // d.screen().erase(static_cast<Erase>(args_int->value(0, 0))),
-            b'K' => unimplemented!(), // d.screen().eraseInLine(static_cast<EraseInLine>(args_int->value(0, 0))),
-            b'L' => unimplemented!(), // d.screen().insertLines(params.get(0, 1)),
-            b'M' => unimplemented!(), // d.screen().deleteLines(params.get(0, 1)),
-            b'P' => unimplemented!(), // d.screen().deleteChars(params.get(0, 1)),
-            b'S' => unimplemented!(), // d.screen().scrollUp(params.get(0, 1)),
-            b'T' => unimplemented!(), // d.screen().scrollDown(params.get(0, 1)),
-            b'X' => unimplemented!(), // d.screen().eraseInLine(EraseInLine::NumChars, params.get(0, 1)),
+            b'L' => d.screen().scroll_at_cursor(-params.get(0, 1)),
+            b'M' => d.screen().scroll_at_cursor(params.get(0, 1)),
+            b'P' => d.screen().erase(VTErase::NumChars(params.get(0, 1) as u32)),   // TODO: is this right?
+            b'S' => d.screen().scroll(params.get(0, 1)),
+            b'T' => d.screen().scroll(-params.get(0, 1)),
+            b'X' => d.screen().erase(VTErase::NumChars(params.get(0, 1) as u32)),
             b'Z' => d.screen().tab(-params.get(0, 1)),
             b'c' => d.report_request(VTReport::PrimaryAttrs),
-            b'd' => d.screen().cursor_set(None, Some(params.get(0, 1) - 1)),
-            b'g' => unimplemented!(), // screen().tabSet(false, args_int->value(0, 0)),
-            b'r' => unimplemented!(), // screen().setMargins(params.get(0, 1)-1, params.get(1, screen().height())-1),
+            b'd' => d.screen().cursor_set(None, Some(params.get(0, 1) as u32)),
+            b'r' => d.screen().set_scroll_region(params.get(0, 0) as u32, params.get(1, 0) as u32),
             b's' => d.screen().cursor_save(),
             b'u' => d.screen().cursor_load(),
             _ => {
@@ -643,7 +718,7 @@ impl VTParser {
             utf8: utf8::Parser::new(),
             interm1: 0,
             interm2: 0,
-            params: IntParams::new(),
+            params: Params::new(),
         }
     }
 

@@ -2,6 +2,7 @@
 #[macro_use] extern crate bitflags;
 extern crate smallvec;
 // extern crate unicode_normalization;
+extern crate unicode_width;
 #[macro_use] extern crate error_chain;
 
 

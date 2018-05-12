@@ -4,7 +4,7 @@ use std::process::Command;
 
 
 fn main() {
-    let mut session = tp_lib::Session::new(Command::new("sh")).unwrap();
+    let mut session = tp_lib::Session::new(Command::new("bash")).unwrap();
     println!("session: {:?}", session);
     session.pk();
 }

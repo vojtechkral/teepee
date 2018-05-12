@@ -102,6 +102,8 @@ impl Process {
         try_c!(libc::openpty(&mut master, &mut slave, ptr::null_mut(), ptr::null(), ptr::null()));
         let (master, slave) = (master, slave);
 
+        println!("PTY open: ({}, {})", master, slave);
+
         // let mut process = Command::new("/usr/bin/bash");
         // let mut process = Command::new(program);
 

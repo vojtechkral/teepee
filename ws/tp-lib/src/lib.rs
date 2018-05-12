@@ -80,7 +80,7 @@ impl Session {
         while let Ok(read) = self.read_ready() {
             if i == 50 {
                 break;
-            } else if i == 0 {
+            } else {
                 thread::sleep_ms(50);
                 i += 1;
             }

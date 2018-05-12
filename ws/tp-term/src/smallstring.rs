@@ -54,6 +54,12 @@ impl<B: Array<Item=u8>> fmt::Debug for SmallString<B> {
 }
 
 impl<B: Array<Item=u8>> SmallString<B> {
+    pub fn new() -> Self {
+        SmallString {
+            buffer: SmallVec::new(),
+        }
+    }
+
     pub fn from_str(s: &str) -> Self {
         SmallString {
             buffer: s.as_bytes().into_iter()
