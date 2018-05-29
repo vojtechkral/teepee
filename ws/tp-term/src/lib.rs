@@ -49,7 +49,10 @@ impl VTDispatch for TermState {
         unimplemented!()
     }
 
-    fn report_request(&mut self, report: VTReport) { unimplemented!() }
+    fn report_request(&mut self, report: VTReport) {
+        // TODO: push an event, same with report requests
+        unimplemented!()
+    }
 
     // TP extensions:
     // TODO
@@ -79,8 +82,11 @@ impl Term {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
+// XXX
+
+#[test]
+fn it_works() {
+    assert_eq!(2 + 2, 4);
+}
+
 }

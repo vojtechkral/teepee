@@ -6,7 +6,7 @@ use utf8;
 // TODO: comment
 // https://vt100.net/emu/dec_ansi_parser
 
-// XXX: OSC may be terminated by bell? (Only in xterm?)
+// XXX: OSC may be terminated by bell (xterm extension?)
 
 bitflags! {
     pub struct VTRendition: u8 {
@@ -228,6 +228,7 @@ pub enum VTReport {
     CursorPos,
     TermParams0,
     TermParams1,
+    Bell,
 }
 
 pub trait VTScreen {
@@ -236,7 +237,7 @@ pub trait VTScreen {
     /// Insert `num` default (empty) characters
     fn put_chars(&mut self, num: u32);
     fn newline(&mut self);
-    fn bell(&mut self);
+    // fn bell(&mut self);
     fn index(&mut self, forward: bool);
     fn next_line(&mut self);
     /// Performs an erase operation pertaining to current cursor location.
@@ -357,7 +358,8 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
                     // Ignored: NUL, SOH, STX, ETX, EOT, ACK, DLE, DC1, DC2, DC3, DC4, NAK, SYN, ETB1, FS, GS, RS, US
                 },
             5 /* ENQ */ => self.d.report_request(VTReport::AnswerBack),
-            7 /* BEL */ => self.screen().bell(),
+            // 7 /* BEL */ => self.screen().bell(),
+            7 /* BEL */ => self.d.report_request(VTReport::Bell),
             8 /* BS */  => self.screen().cursor_move(-1, 0),
             9 /* HT */  => self.screen().tab(1),
             0xa ... 0xc /* LF, VT, FF */ => self.screen().newline(),
@@ -576,7 +578,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
             b'L' => d.screen().scroll_at_cursor(-params.get(0, 1)),
             b'M' => d.screen().scroll_at_cursor(params.get(0, 1)),
             b'P' => d.screen().erase(VTErase::NumChars(params.get(0, 1) as u32)),   // TODO: is this right?
-            b'S' => d.screen().scroll(params.get(0, 1)),
+            b'S' => d.screen().scroll( params.get(0, 1)),
             b'T' => d.screen().scroll(-params.get(0, 1)),
             b'X' => d.screen().erase(VTErase::NumChars(params.get(0, 1) as u32)),
             b'Z' => d.screen().tab(-params.get(0, 1)),
