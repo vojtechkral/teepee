@@ -71,6 +71,7 @@ impl Term {
             state: TermState::new(),
         }
     }
+
     pub fn input(&mut self, data: &[u8]) {
         self.parser.input(data, &mut self.state);
     }

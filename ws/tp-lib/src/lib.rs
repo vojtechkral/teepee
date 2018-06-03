@@ -8,6 +8,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 use std::thread;
 use std::process::Command;
+use std::os::unix::io::{RawFd, AsRawFd};
 
 use tp_pty::{Process, TermSize};
 use tp_term::Term;
@@ -41,7 +42,6 @@ pub use err::*;
 
 pub struct Session {
     ps: Process,
-    // parser: vte::Parser,
     buffer: Vec<u8>,
     term: Term,
 }
@@ -56,7 +56,20 @@ impl Session {
         })
     }
 
-    pub fn pk(&mut self) {
+    pub fn notify_read(&mut self) -> Result<usize> {
+        let avail = self.ps.bytes_available()?;
+        if avail > 0 {
+            let actually_read = self.ps.read(&mut self.buffer)?;
+            if actually_read > 0 {
+                self.term.input(&self.buffer[0..actually_read]);
+            }
+            Ok(actually_read)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub fn pk(&mut self) {    // XXX
         let mut buffer = vec![0; 4096];
 
         self.ps.resize(TermSize::new(25, 80)).unwrap();
@@ -77,7 +90,7 @@ impl Session {
         //         i += 1;
         //     }
         // }
-        while let Ok(read) = self.read_ready() {
+        while let Ok(read) = self.notify_read() {
             if i == 50 {
                 break;
             } else {
@@ -86,20 +99,11 @@ impl Session {
             }
         }
     }
+}
 
-    pub fn read_ready(&mut self) -> Result<usize> {
-        // TODO: TermState might as well accept Reads
-        let avail = self.ps.bytes_available()?;
-        if avail > 0 {
-            let actually_read = self.ps.read(&mut self.buffer)?;
-            // for b in &self.buffer[0..actually_read] {
-            //     // self.parser.advance(&mut self.state, *b);
-            // }
-            self.term.input(&self.buffer[0..actually_read]);
-            Ok(actually_read)
-        } else {
-            Ok(0)
-        }
+impl AsRawFd for Session {
+    fn as_raw_fd(&self) -> RawFd {
+        self.ps.as_raw_fd()
     }
 }
 

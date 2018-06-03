@@ -257,8 +257,9 @@ pub trait VTScreen {
     fn scroll(&mut self, num: i32);
 
     /// Scroll between current line and the bottom of the screen or the scrolling region if any.
-    /// If current line is outside of the scrolling region, there is no effect.
-    /// Positive `num` is for scrolling up, negative for scrolling down.
+    /// If the current line is outside of the scrolling region, there is no effect.
+    /// Positive `num` is for scrolling up, negative for scrolling down. In VT jargon this is known as
+    /// Delete Lines and Insert Lines, respectively.
     fn scroll_at_cursor(&mut self, num: i32);
 
     /// Set scrolling region.
@@ -533,6 +534,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         if self.p.interm1 != 0 {
             match (self.p.interm1, byte) {
                 (b'>', b'c') => self.d.report_request(VTReport::SecondaryAttrs),
+                // XXX: support these?
                 // case csi("?h"): csi_dec_modes_set(); break;
                 // case csi("?l"): if (csi_dec_modes_decanm()) fgoto vt52; break;
                 // case csi("?r"): /* TODO: restore mode */ break; /* xterm specific ? */

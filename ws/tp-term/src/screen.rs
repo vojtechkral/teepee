@@ -132,6 +132,8 @@ pub struct Cursor {
     charset: VTCharset,
     /// Charset slots (four by specification)
     charsets: [VTCharset ; 4],
+    /// Whether VTMode::Origin is active, only used for cursor save & restore
+    mode_origin: bool,
 }
 
 impl Cursor {
@@ -167,6 +169,7 @@ pub struct Screen {
     /// Mode
     mode: VTMode,
     /// Scrolling region span: top, bottom; spans the whole screen by default
+    /// Warning: `scroll_rg` is 0-indexed, while `set_scroll_region()` has 1-indexed arguments (with `0` being "the default").
     scroll_rg: (u32, u32),
     /// Tab stops
     tabs: Vec<bool>,
@@ -200,7 +203,7 @@ impl Screen {
     }
 
     fn empty_char(&self) -> Char {
-        Char::with_style(self.cursor.style)
+        Char::with_style(self.cursor.style)    // XXX: replace occurences
     }
 
     fn empty_line(&self) -> Line {
@@ -219,6 +222,15 @@ impl Screen {
         self.cursor.y >= self.scroll_rg.0 && self.cursor.y <= self.scroll_rg.1
     }
 
+    fn cursor_set_pos(&mut self, x: u32, y: u32) {
+        self.cursor.x = self.clamp_x(x);
+        self.cursor.y = if self.mode.contains(VTMode::Origin) {
+            y.min(self.scroll_rg.1).max(self.scroll_rg.0)
+        } else {
+            self.clamp_y(y)
+        };
+    }
+
     fn current_char(&mut self) -> &mut Char {
         let x = self.x();
         self.lines.get_mut(self.cursor.y as usize).and_then(|line| line.get_mut(x)).expect("Cursor position out of bounds")
@@ -226,6 +238,41 @@ impl Screen {
 
     fn current_line(&mut self) -> &mut Line {
         self.lines.get_mut(self.cursor.y as usize).expect("Cursor position out of bounds")
+    }
+
+    /// Scroll lines in the range (top, bottom), inserting blank lines and popping to scrollback if appropriate
+    fn scroll_generic(&mut self, range: (u32, u32), num: i32) {
+        // FIXME: dirty marking
+
+        let range = (range.0 as i32, range.1 as i32);
+
+        if num > 0 {
+            // Scroll up
+
+            for i in range.0 .. range.0 - num + 1 {
+                self.lines.swap(i as usize, (i + num) as usize);
+            }
+
+            for i in range.0 - num + 1 .. range.0 + 1 {
+                let mut empty = self.empty_line();
+                mem::swap(&mut empty, self.lines.get_mut(i as usize).expect("Lines index out of bounds"));
+                if range.0 == 0 {
+                    // TODO: Scrollback
+                }
+            }
+
+        } else {
+            // Scroll down
+
+            for i in (range.0 + num .. range.0).rev() {
+                self.lines.swap(i as usize, (i - num) as usize);
+            }
+
+            for i in range.0 .. range.0 + num {
+                let mut empty = self.empty_line();
+                *self.lines.get_mut(i as usize).expect("Lines index out of bounds") = empty;
+            }
+        }
     }
 }
 
@@ -426,7 +473,7 @@ impl VTScreen for Screen {
         // Note that scroll region interval is inclusive
 
         // First make sure no more than the number of lines in scroll region is scrolled
-        let srsize = (self.scroll_rg.1 - self.scroll_rg.0 + 1) as i32;   // XXX: off by one?
+        let srsize = (self.scroll_rg.1 - self.scroll_rg.0 + 1) as i32;
         if num == 0 { num = 1; }
         let num = num.min(srsize).max(-srsize);
 
@@ -452,38 +499,56 @@ impl VTScreen for Screen {
         } else {
             // Scroll the scrolling region
 
-            // FIXME: dirty marking
+            let scroll_rg = self.scroll_rg;
+            self.scroll_generic(scroll_rg, num);
 
-            let (rg_0, rg_1) = (self.scroll_rg.0 as i32, self.scroll_rg.1 as i32);
+            // let (rg_0, rg_1) = (self.scroll_rg.0 as i32, self.scroll_rg.1 as i32);
 
-            if num > 0 {
-                // Scroll up
-                for i in rg_0 .. rg_1 - num + 1 {
-                    self.lines.swap(i as usize, (i + num) as usize);
-                }
-                for i in rg_1 - num + 1 .. rg_1 + 1 {
-                    let mut empty = self.empty_line();
-                    mem::swap(&mut empty, self.lines.get_mut(i as usize).expect("Lines index out of bounds"));
-                    if rg_0 == 0 {
-                        // TODO: Scrollback
-                    }
-                }
-            } else {
-                // Scroll down
-                for i in (rg_0 + num .. rg_1).rev() {
-                    self.lines.swap(i as usize, (i - num) as usize);
-                }
-                for i in rg_0 .. rg_0 + num {
-                    let mut empty = self.empty_line();
-                    *self.lines.get_mut(i as usize).expect("Lines index out of bounds") = empty;
-                }
-            }
+            // if num > 0 {
+            //     // Scroll up
+            //     for i in rg_0 .. rg_1 - num + 1 {
+            //         self.lines.swap(i as usize, (i + num) as usize);
+            //     }
+            //     for i in rg_1 - num + 1 .. rg_1 + 1 {
+            //         let mut empty = self.empty_line();
+            //         mem::swap(&mut empty, self.lines.get_mut(i as usize).expect("Lines index out of bounds"));
+            //         if rg_0 == 0 {
+            //             // TODO: Scrollback
+            //         }
+            //     }
+            // } else {
+            //     // Scroll down
+            //     for i in (rg_0 + num .. rg_1).rev() {
+            //         self.lines.swap(i as usize, (i - num) as usize);
+            //     }
+            //     for i in rg_0 .. rg_0 + num {
+            //         let mut empty = self.empty_line();
+            //         *self.lines.get_mut(i as usize).expect("Lines index out of bounds") = empty;
+            //     }
+            // }
         }
     }
 
-    fn scroll_at_cursor(&mut self, num: i32) { unimplemented!() }
+    fn scroll_at_cursor(&mut self, mut num: i32) {
+        if !self.cursor_in_sr() { return; }
 
-    fn set_scroll_region(&mut self, top: u32, bottom: u32) { unimplemented!() }
+        let x = self.cursor.x;
+        let scroll_rg_bottom = self.scroll_rg.1;
+        let num_lines = (scroll_rg_bottom - x + 1) as i32;
+        if num == 0 { num = 1; }
+        num = num.min(num_lines).max(-num_lines);
+        self.scroll_generic((x, scroll_rg_bottom), num);
+    }
+
+    fn set_scroll_region(&mut self, mut top: u32, mut bottom: u32) {
+        if bottom == 0 { bottom = self.size.1 - 1; }
+        bottom = bottom.min(self.size.1 - 1);
+        top = top.min(bottom - 1);
+
+        self.scroll_rg = (top, bottom);
+        self.cursor.x = 0;
+        self.cursor.y = 0;
+    }
 
     fn set_mode(&mut self, mode: VTMode, enable: bool) {
         self.mode.set(mode, enable);
@@ -502,15 +567,38 @@ impl VTScreen for Screen {
     fn reset(&mut self) { unimplemented!() }
 
     fn cursor_set(&mut self, x: Option<u32>, y: Option<u32>) {
-        if let Some(x) = x { self.cursor.x = self.clamp_x(x - 1); }
-        if let Some(y) = y { self.cursor.y = self.clamp_y(y - 1); }
+        if let Some(y) = y {
+            let cx = self.cursor.x;
+            self.cursor_set_pos(x.map_or(cx, |x| x - 1), y - 1);
+        } else if let Some(x) = x {
+            self.cursor.x = self.clamp_x(x - 1);
+        }
     }
 
-    fn cursor_move(&mut self, x: i32, y: i32) { unimplemented!() }
-    fn cursor_save(&mut self) { unimplemented!() }
-    fn cursor_load(&mut self) { unimplemented!() }
+    fn cursor_move(&mut self, x: i32, y: i32) {
+        let cx = self.cursor.x as i32 + x;
+        let cy = self.cursor.y as i32 + y;
+        self.cursor_set_pos(cx as u32, cy as u32);
+    }
 
-    fn alignment_test(&mut self) { unimplemented!() }
+    fn cursor_save(&mut self) {
+        self.cursor_saved = self.cursor.clone();
+        self.cursor_saved.mode_origin = self.mode.contains(VTMode::Origin);
+    }
+
+    fn cursor_load(&mut self) {
+        self.cursor = self.cursor_saved.clone();
+        self.mode.set(VTMode::Origin, self.cursor_saved.mode_origin);
+        self.cursor.x = self.clamp_x(self.cursor.x);
+        self.cursor.y = self.clamp_y(self.cursor.y);
+    }
+
+    fn alignment_test(&mut self) {
+        let eeeeee = Line::new(Char::new('E', self.cursor.style), self.size.0);
+        for line in self.lines.iter_mut() {
+            *line = eeeeee.clone();
+        }
+    }
 }
 
 
