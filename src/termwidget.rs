@@ -104,7 +104,7 @@ impl TermWidget {
         let (cellw, cellh) = (self.font.cellw, self.font.cellh);
         let (x, y) = (x as f64 * cellw, y as f64 * cellh);
         let y_text = y + cellh - self.font.descent;
-        let bold = cell.rendition().contains(VTRendition::Bold);
+        let bold = cell.rendition().contains(VTRendition::BOLD);
 
         // Draw cell background
         let (br, bg, bb) = (0.0, 0.0, 0.0);   // XXX

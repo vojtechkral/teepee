@@ -10,24 +10,24 @@ use utf8;
 
 bitflags! {
     pub struct VTRendition: u8 {
-        const Bold       = 1 << 0;
-        const Underlined = 1 << 1;
-        /// Blinking is sometimes implemented as synonimous to Bold.
-        const Blinking   = 1 << 2;
-        const Inverse    = 1 << 3;
-        const Invisible  = 1 << 4;
-        const All = 0x1f;
+        const BOLD       = 1 << 0;
+        const UNDERLINED = 1 << 1;
+        /// Blinking is sometimes implemented as synonimous to bold.
+        const BLINKING   = 1 << 2;
+        const INVERSE    = 1 << 3;
+        const INVISIBLE  = 1 << 4;
+        const ALL = 0x1f;
 
         /// Marks a wide unicode character
-        const Wide       = 1 << 5;
+        const WIDE       = 1 << 5;
         /// For rendering purposes
-        const Dirty      = 1 << 6;
+        const DIRTY      = 1 << 6;
     }
 }
 
 impl Default for VTRendition {
     fn default() -> VTRendition {
-        VTRendition::Dirty    // A sensible default, methinks
+        VTRendition::DIRTY    // A sensible default, methinks
     }
 }
 
@@ -115,17 +115,17 @@ impl Default for VTCharset {
 
 bitflags! {
     pub struct VTMode: u8 {
-        const Wrap         = 1 << 0;
-        const Origin       = 1 << 1;
-        const NewLine      = 1 << 2;
-        const Insert       = 1 << 3;
-        const ReverseVideo = 1 << 4;
+        const WRAP         = 1 << 0;
+        const ORIGIN       = 1 << 1;
+        const NEWLINE      = 1 << 2;
+        const INSERT       = 1 << 3;
+        const REVERSEVIDEO = 1 << 4;
     }
 }
 
 impl Default for VTMode {
     fn default() -> VTMode {
-        VTMode::Wrap
+        VTMode::WRAP
     }
 }
 
@@ -463,8 +463,8 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
     fn csi_modes(&mut self, enable: bool) {
         for m in self.p.params.iter() {
             match *m {
-                4 => self.d.set_mode(VTMode::Insert, enable),
-                20 => self.d.set_mode(VTMode::NewLine, enable),
+                4 => self.d.set_mode(VTMode::INSERT, enable),
+                20 => self.d.set_mode(VTMode::NEWLINE, enable),
                 _ => {},
             }
         }
@@ -473,13 +473,13 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
     fn csi_modes_dec(&mut self, enable: bool) {
         for m in self.p.params.iter() {
             match *m {
-                5 => self.d.set_mode(VTMode::ReverseVideo, enable),
+                5 => self.d.set_mode(VTMode::REVERSEVIDEO, enable),
                 6 => {
-                    self.d.set_mode(VTMode::Origin, enable);
+                    self.d.set_mode(VTMode::ORIGIN, enable);
                     self.d.screen_primary().cursor_set(Some(1), Some(1));
                     self.d.screen_alternate().cursor_set(Some(1), Some(1));
                 },
-                20 => self.d.set_mode(VTMode::NewLine, enable),   // FIXME: also applies to input
+                20 => self.d.set_mode(VTMode::NEWLINE, enable),   // FIXME: also applies to input
                 47 | 1047 if  enable => self.d.switch_screen(VTScreenChoice::Primary),
                 47 | 1047 if !enable => self.d.switch_screen(VTScreenChoice::Alternate),
                 1048 if  enable => self.d.screen().cursor_save(),
@@ -501,7 +501,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
     /// Character rendition setting. The one escape sequence people actually know to exist.
     fn csi_sgr(&mut self) {
         if self.p.params.len() == 0 {
-            self.screen().set_rendition(VTRendition::All, false);
+            self.screen().set_rendition(VTRendition::ALL, false);
             return;
         }
 
@@ -509,18 +509,18 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         let mut it = self.p.params.iter().map(|p| *p);
         while let Some(p) = it.next() {
             match p {
-                0 => screen.set_rendition(VTRendition::All, false),
-                1 => screen.set_rendition(VTRendition::Bold, true),
-                4 => screen.set_rendition(VTRendition::Underlined, true),
-                5 => screen.set_rendition(VTRendition::Blinking, true),
-                7 => screen.set_rendition(VTRendition::Inverse, true),
-                8 => screen.set_rendition(VTRendition::Invisible, true),
+                0 => screen.set_rendition(VTRendition::ALL, false),
+                1 => screen.set_rendition(VTRendition::BOLD, true),
+                4 => screen.set_rendition(VTRendition::UNDERLINED, true),
+                5 => screen.set_rendition(VTRendition::BLINKING, true),
+                7 => screen.set_rendition(VTRendition::INVERSE, true),
+                8 => screen.set_rendition(VTRendition::INVISIBLE, true),
 
-                22 => screen.set_rendition(VTRendition::Bold, false),
-                24 => screen.set_rendition(VTRendition::Underlined, false),
-                25 => screen.set_rendition(VTRendition::Blinking, false),
-                27 => screen.set_rendition(VTRendition::Inverse, false),
-                28 => screen.set_rendition(VTRendition::Invisible, false),
+                22 => screen.set_rendition(VTRendition::BOLD, false),
+                24 => screen.set_rendition(VTRendition::UNDERLINED, false),
+                25 => screen.set_rendition(VTRendition::BLINKING, false),
+                27 => screen.set_rendition(VTRendition::INVERSE, false),
+                28 => screen.set_rendition(VTRendition::INVISIBLE, false),
 
                 // Foreground color
                 30 ... 39 | 90 ... 97 => {

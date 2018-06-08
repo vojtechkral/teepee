@@ -58,11 +58,11 @@ impl Cell {
     // }
 
     pub fn dirty(&self) -> bool {
-        self.style.rendition.contains(VTRendition::Dirty)
+        self.style.rendition.contains(VTRendition::DIRTY)
     }
 
     pub fn set_dirty(&mut self, dirty: bool) {
-        self.style.rendition.set(VTRendition::Dirty, dirty);
+        self.style.rendition.set(VTRendition::DIRTY, dirty);
     }
 
     pub fn push(&mut self, ch: char) {
@@ -139,7 +139,7 @@ pub struct Cursor {
     charset: VTCharset,
     /// Charset slots (four by specification)
     charsets: [VTCharset ; 4],
-    /// Whether VTMode::Origin is active, only used for cursor save & restore
+    /// Whether VTMode::ORIGIN is active, only used for cursor save & restore
     mode_origin: bool,
 }
 
@@ -236,7 +236,7 @@ impl Screen {
 
     fn cursor_set_pos(&mut self, x: u32, y: u32) {
         self.cursor.x = self.clamp_x(x);
-        self.cursor.y = if self.mode.contains(VTMode::Origin) {
+        self.cursor.y = if self.mode.contains(VTMode::ORIGIN) {
             y.min(self.scroll_rg.1).max(self.scroll_rg.0)
         } else {
             self.clamp_y(y)
@@ -316,7 +316,7 @@ impl VTScreen for Screen {
 
 
             if self.cursor.x > x_last_valid {
-                if self.mode.contains(VTMode::Wrap) && self.cursor_in_sr() {
+                if self.mode.contains(VTMode::WRAP) && self.cursor_in_sr() {
                     self.newline();
                     self.cursor.x = 0;
                 } else {
@@ -329,14 +329,14 @@ impl VTScreen for Screen {
 
             if x > 0 {
                 let prev = &mut line[x];
-                if prev.style.rendition.contains(VTRendition::Wide) {
+                if prev.style.rendition.contains(VTRendition::WIDE) {
                     *prev = Cell::new(' ', prev.style);
-                    prev.style.rendition.remove(VTRendition::Wide);
+                    prev.style.rendition.remove(VTRendition::WIDE);
                     prev.set_dirty(true);
                 }
             }
 
-            if self.mode.contains(VTMode::Insert) {
+            if self.mode.contains(VTMode::INSERT) {
                 for c in line[x + 1 ..].iter_mut() {
                     *c = Cell::with_style(self.cursor.style);
                 }
@@ -344,7 +344,7 @@ impl VTScreen for Screen {
 
             let mut ch = Cell::new(ch, self.cursor.style);
             if width == 2 {
-                ch.style.rendition.insert(VTRendition::Wide);
+                ch.style.rendition.insert(VTRendition::WIDE);
                 line[x + 1] = Cell::with_style(self.cursor.style);
             }
 
@@ -364,7 +364,7 @@ impl VTScreen for Screen {
 
     fn newline(&mut self) {
         self.index(true);
-        if self.mode.contains(VTMode::NewLine) {
+        if self.mode.contains(VTMode::NEWLINE) {
             self.cursor.x = 0;
         }
     }
@@ -603,12 +603,12 @@ impl VTScreen for Screen {
 
     fn cursor_save(&mut self) {
         self.cursor_saved = self.cursor.clone();
-        self.cursor_saved.mode_origin = self.mode.contains(VTMode::Origin);
+        self.cursor_saved.mode_origin = self.mode.contains(VTMode::ORIGIN);
     }
 
     fn cursor_load(&mut self) {
         self.cursor = self.cursor_saved.clone();
-        self.mode.set(VTMode::Origin, self.cursor_saved.mode_origin);
+        self.mode.set(VTMode::ORIGIN, self.cursor_saved.mode_origin);
         self.cursor.x = self.clamp_x(self.cursor.x);
         self.cursor.y = self.clamp_y(self.cursor.y);
     }
