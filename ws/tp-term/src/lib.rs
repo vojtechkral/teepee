@@ -5,6 +5,7 @@ extern crate smallvec;
 extern crate unicode_width;
 #[macro_use] extern crate error_chain;
 
+use std::ops;
 
 pub mod utf8;
 mod smallstring;
@@ -23,30 +24,57 @@ pub use err::*;
 
 
 #[derive(Debug)]
-struct TermState {
-    // TODO: two screens, history, ...
+pub struct TermState {
+    screen_current: VTScreenChoice,
     screen_primary: Screen,
+    screen_alternate: Screen,
+    screen_choice_prev: VTScreenChoice,
+    // TODO: scrollback, request queue
 }
 
 impl TermState {
     pub fn new() -> TermState {
         TermState {
-            screen_primary: Screen::new(),
+            screen_current: VTScreenChoice::default(),
+            screen_primary: Screen::default(),
+            screen_alternate: Screen::default(),
+            screen_choice_prev: VTScreenChoice::default(),
         }
-    }   // TODO: use default?
+    }
+
+    pub fn screen_switched(&mut self) -> bool {
+        let res = self.screen_choice_prev != self.screen_current;
+        self.screen_choice_prev = self.screen_current;
+        res
+    }
+
+    pub fn screen_resize(&mut self, cols: u32, rows: u32) {
+        self.screen_primary.resize(cols, rows);
+        self.screen_alternate.resize(cols, rows);
+    }
 }
 
 impl VTDispatch for TermState {
     type Screen = Screen;
 
     fn screen(&mut self) -> &mut Self::Screen {
-        // TODO: screen switching
-        &mut self.screen_primary
+        match self.screen_current {
+            VTScreenChoice::Primary => &mut self.screen_primary,
+            VTScreenChoice::Alternate => &mut self.screen_alternate,
+        }
+    }
+
+    fn screen_primary(&mut self) -> &mut Self::Screen { &mut self.screen_primary }
+    fn screen_alternate(&mut self) -> &mut Self::Screen { &mut self.screen_alternate }
+
+    fn switch_screen(&mut self, screen: VTScreenChoice) {
+        self.screen_current = screen;
     }
 
     fn set_mode(&mut self, mode: VTMode, enable: bool) {
         // TODO: set mode on both screens
-        unimplemented!()
+        self.screen_primary.set_mode(mode, enable);
+        self.screen_alternate.set_mode(mode, enable);
     }
 
     fn report_request(&mut self, report: VTReport) {
@@ -77,7 +105,19 @@ impl Term {
     }
 }
 
+impl ops::Deref for Term {
+    type Target = TermState;
 
+    fn deref(&self) -> &TermState {
+        &self.state
+    }
+}
+
+impl ops::DerefMut for Term {
+    fn deref_mut(&mut self) -> &mut TermState {
+        &mut self.state
+    }
+}
 
 
 

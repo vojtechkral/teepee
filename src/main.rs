@@ -7,6 +7,7 @@ extern crate cairo;
 extern crate tp_lib as tp;
 
 mod giochannel;
+mod termwidget;
 
 use std::ops;
 use std::env;
@@ -20,66 +21,78 @@ use gio::prelude::*;
 use gtk::prelude::*;
 
 use giochannel::{IOChannel, IOCondition};
+use termwidget::TermWidget;
 
 
-#[derive(Debug)]
-pub struct TermWidget {
-    draw_area: gtk::DrawingArea,
-}
+// #[derive(Debug)]
+// pub struct TermWidget {
+//     draw_area: gtk::DrawingArea,
+// }
 
-impl TermWidget {
-    pub fn new() -> TermWidget {
-        // let draw_area = gtk::DrawingArea::new();
+// impl TermWidget {
+//     pub fn new() -> TermWidget {
+//         // let draw_area = gtk::DrawingArea::new();
 
-        // let widget = Rc::new(TermWidget {
-        //     draw_area
-        // });
+//         // let widget = Rc::new(TermWidget {
+//         //     draw_area
+//         // });
 
-        // let widget_ = widget.clone();
-        // widget.draw_area.connect_draw(move |_, cr| {
-        //     widget_.redraw(cr);
-        //     Inhibit(false)
-        // });
+//         // let widget_ = widget.clone();
+//         // widget.draw_area.connect_draw(move |_, cr| {
+//         //     widget_.redraw(cr);
+//         //     Inhibit(false)
+//         // });
 
-        // widget
+//         // widget
 
-        TermWidget {
-            draw_area: gtk::DrawingArea::new()
-        }
-    }
+//         TermWidget {
+//             draw_area: gtk::DrawingArea::new()
+//         }
+//     }
 
-    fn redraw(&self, cr: &cairo::Context, session: &tp::Session) {
-        cr.move_to(0.0, 20.0);
-        cr.show_text("Hokus pokus");
-    }
+//     fn redraw(&self, cr: &cairo::Context, session: &mut tp::Session) {
+//         let mut y = 20.0;
+//         let mut x = 0.0;
+//         for line in session.term.screen().line_iter() {
+//             for c in line.iter_mut() {
+//                 cr.move_to(x, y);
+//                 cr.show_text(c.as_str());
 
-    // pub fn connect_draw<T>(container: Rc<T>) where T: 'static + AsRef<TermWidget> + AsRef<tp::Session> {
-    //     let term_widget: &TermWidget = (*container).as_ref();
+//                 x += 10.0;
+//             }
 
-    //     let container_ = container.clone();
-    //     term_widget.draw_area.connect_draw(move |_, cr| {
-    //         let term_widget: &TermWidget = (*container_).as_ref();
-    //         let session: &tp::Session = (*container_).as_ref();
+//             x = 0.0;
+//             y += 20.0;
+//         }
+//     }
 
-    //         term_widget.redraw(cr, session);
+//     // pub fn connect_draw<T>(container: Rc<T>) where T: 'static + AsRef<TermWidget> + AsRef<tp::Session> {
+//     //     let term_widget: &TermWidget = (*container).as_ref();
 
-    //         Inhibit(false)
-    //     });
-    // }
+//     //     let container_ = container.clone();
+//     //     term_widget.draw_area.connect_draw(move |_, cr| {
+//     //         let term_widget: &TermWidget = (*container_).as_ref();
+//     //         let session: &tp::Session = (*container_).as_ref();
 
-    fn connect_draw<F>(&self, func: F)
-    where F: Fn(&gtk::DrawingArea, &cairo::Context) -> Inhibit + 'static {
-        self.draw_area.connect_draw(func);
-    }
+//     //         term_widget.redraw(cr, session);
 
-    pub fn queue_draw(&self) {
-        self.draw_area.queue_draw();
-    }
+//     //         Inhibit(false)
+//     //     });
+//     // }
 
-    pub fn draw_area(&self) -> &gtk::DrawingArea {
-        &self.draw_area
-    }
-}
+//     fn connect_draw<F>(&self, func: F)
+//     where F: Fn(&gtk::DrawingArea, &cairo::Context) -> Inhibit + 'static {
+//         self.draw_area.connect_draw(func);
+//     }
+
+//     pub fn queue_draw(&self) {
+//         self.draw_area.queue_draw();
+//     }
+
+//     pub fn draw_area(&self) -> &gtk::DrawingArea {
+//         &self.draw_area
+//     }
+// }
 
 #[derive(Debug)]
 pub struct Shell {
@@ -133,9 +146,14 @@ impl Shell {
         });
 
         let shell_ = shell.clone();
-        shell.term_widget.connect_draw(move |_, cr| {
-            shell_.term_widget.redraw(cr, &*shell_.session.borrow());
-            Inhibit(false)
+        shell.term_widget.connect_draw(move |cairo| {
+            shell_.term_widget.render(cairo, &mut *shell_.session.borrow_mut());
+        });
+
+        let shell_ = shell.clone();
+        shell.term_widget.connect_resize(move || {
+            let (cols, rows) = shell_.term_widget.screen_size();
+            shell_.session.borrow_mut().term.screen_resize(cols, rows);
         });
 
         let shell_cell = ShellCell::new(&shell);
@@ -143,7 +161,7 @@ impl Shell {
             let shell = &*shell_cell;
             let mut session = shell.session.borrow_mut();
             let res = session.notify_read();
-            if (res.is_ok()) {
+            if res.is_ok() {
                 shell.term_widget.queue_draw();
                 Continue(true)
             } else {
@@ -167,7 +185,7 @@ fn build_ui(application: &gtk::Application) {
     window.set_title("Hello, World!");
     window.set_border_width(10);
     window.set_position(gtk::WindowPosition::Center);
-    window.set_default_size(500, 500);
+    window.set_default_size(1000, 500);
 
     let window_ = window.clone();
     window.connect_delete_event(move |_, _| {

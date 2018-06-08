@@ -1,6 +1,6 @@
 use std::{mem, ops};
+use std::str::Chars;
 use std::collections::VecDeque;
-// use unicode_normalization::char as unicode;
 use unicode_width::UnicodeWidthChar;
 
 use ::smallstring::*;
@@ -18,14 +18,14 @@ pub struct Style {
 /// Character as part of the screen's grid, has associated `Style`
 ///
 /// May actually consist of more than one unicode characters if combining marks are present.
-pub struct Char {
+pub struct Cell {
     chars: SmallString<[u8 ; 4]>,
     style: Style,
 }
 
-impl Char {
-    pub fn new(ch: char, style: Style) -> Char {
-        let mut res = Char {
+impl Cell {
+    pub fn new(ch: char, style: Style) -> Cell {
+        let mut res = Cell {
             chars: SmallString::new(),
             style
         };
@@ -33,8 +33,8 @@ impl Char {
         res
     }
 
-    pub fn with_style(style: Style) -> Char {   // You gotta do stuff with_style!
-        let mut ch = Char::default();
+    pub fn with_style(style: Style) -> Cell {   // You gotta do stuff with_style!
+        let mut ch = Cell::default();
         ch.style = style;
         ch
         // Yeah, I know it was a bad joke...
@@ -71,16 +71,24 @@ impl Char {
     }
 
     // TODO: &str
+    pub fn as_str(&self) -> &str {
+        self.chars.as_ref()
+    }
+
+    pub fn col_fg(&self) -> VTColor { self.style.col_fg }
+    pub fn col_bg(&self) -> VTColor { self.style.col_bg }
+    pub fn rendition(&self) -> VTRendition { self.style.rendition }
 }
 
-impl Default for Char {
-    fn default() -> Char {
-        Char {
+impl Default for Cell {
+    fn default() -> Cell {
+        Cell {
             chars: SmallString::from_str(" "),
             style: Style::default(),
         }
     }
 }
+
 
 pub const GRAPHICS: [char ; 32] = [
     '\u{0020}', '\u{25c6}', '\u{2592}', '\u{2409}', '\u{240c}', '\u{240d}', '\u{240a}', '\u{00b0}',   // _ through f
@@ -91,18 +99,17 @@ pub const GRAPHICS: [char ; 32] = [
 
 #[derive(Debug, Clone)]
 pub struct Line {
-    // TODO
-    chars: Vec<Char>,
+    chars: Vec<Cell>,
 }
 
 impl Line {
-    pub fn new(ch: Char, width: u32) -> Line {
+    pub fn new(ch: Cell, width: u32) -> Line {
         Line {
             chars: vec![ch ; width as usize],
         }
     }
 
-    fn fill(&mut self, start: usize, end: usize, value: Char) {
+    fn fill(&mut self, start: usize, end: usize, value: Cell) {
         self.chars.iter_mut()
             .skip(start)
             .take(end.saturating_sub(start))
@@ -111,7 +118,7 @@ impl Line {
 }
 
 impl ops::Deref for Line {
-    type Target = Vec<Char>;
+    type Target = Vec<Cell>;
     fn deref(&self) -> &Self::Target { &self.chars }
 }
 
@@ -156,7 +163,7 @@ impl Cursor {
 }
 
 pub const SCREEN_SIZE_MIN: (u32, u32) = (10, 5);
-pub const SCREEN_SIZE_DEFALT: (u32, u32) = (80, 40);
+pub const SCREEN_SIZE_DEFAULT: (u32, u32) = (80, 40);
 
 #[derive(Debug)]
 pub struct Screen {
@@ -186,7 +193,7 @@ impl Screen {
     pub fn with_size(size: (u32, u32)) -> Screen {
         let mut lines = VecDeque::with_capacity(size.1 as usize);
         for _ in 0 .. size.1 {
-            lines.push_back(Line::new(Char::default(), size.0));
+            lines.push_back(Line::new(Cell::default(), size.0));
         }
 
         let tabs = (0 .. size.0).map(|i| i > 0 && i % 8 == 0).collect();
@@ -202,8 +209,13 @@ impl Screen {
         }
     }
 
-    fn empty_char(&self) -> Char {
-        Char::with_style(self.cursor.style)    // XXX: replace occurences
+    /// Iterate Lines
+    pub fn line_iter(&mut self) -> impl ExactSizeIterator + Iterator<Item=&mut Line> {
+        self.lines.iter_mut()
+    }
+
+    fn empty_char(&self) -> Cell {
+        Cell::with_style(self.cursor.style)    // XXX: replace occurences
     }
 
     fn empty_line(&self) -> Line {
@@ -231,7 +243,7 @@ impl Screen {
         };
     }
 
-    fn current_char(&mut self) -> &mut Char {
+    fn current_char(&mut self) -> &mut Cell {
         let x = self.x();
         self.lines.get_mut(self.cursor.y as usize).and_then(|line| line.get_mut(x)).expect("Cursor position out of bounds")
     }
@@ -276,6 +288,12 @@ impl Screen {
     }
 }
 
+impl Default for Screen {
+    fn default() -> Screen {
+        Screen::with_size(SCREEN_SIZE_DEFAULT)
+    }
+}
+
 impl VTScreen for Screen {
     fn put_char(&mut self, ch: char) {
         println!("put_char: {} @ ({}, {})", ch, self.x(), self.y());
@@ -312,7 +330,7 @@ impl VTScreen for Screen {
             if x > 0 {
                 let prev = &mut line[x];
                 if prev.style.rendition.contains(VTRendition::Wide) {
-                    *prev = Char::new(' ', prev.style);
+                    *prev = Cell::new(' ', prev.style);
                     prev.style.rendition.remove(VTRendition::Wide);
                     prev.set_dirty(true);
                 }
@@ -320,14 +338,14 @@ impl VTScreen for Screen {
 
             if self.mode.contains(VTMode::Insert) {
                 for c in line[x + 1 ..].iter_mut() {
-                    *c = Char::with_style(self.cursor.style);
+                    *c = Cell::with_style(self.cursor.style);
                 }
             }
 
-            let mut ch = Char::new(ch, self.cursor.style);
+            let mut ch = Cell::new(ch, self.cursor.style);
             if width == 2 {
                 ch.style.rendition.insert(VTRendition::Wide);
-                line[x + 1] = Char::with_style(self.cursor.style);
+                line[x + 1] = Cell::with_style(self.cursor.style);
             }
 
             line[x] = ch;
@@ -429,13 +447,13 @@ impl VTScreen for Screen {
     }
 
     fn resize(&mut self, cols: u32, rows: u32) {
-        let cols = cols.min(SCREEN_SIZE_MIN.0);
-        let rows = rows.min(SCREEN_SIZE_MIN.1);
+        let cols = cols.max(SCREEN_SIZE_MIN.0);
+        let rows = rows.max(SCREEN_SIZE_MIN.1);
 
         // Resize each line
         if cols > self.size.0 {
             for line in self.lines.iter_mut() {
-                let ch = Char::with_style(line.last().unwrap().style);
+                let ch = Cell::with_style(line.last().unwrap().style);
                 line.resize(cols as usize, ch);
             }
         } else if cols < self.size.0 {
@@ -446,6 +464,8 @@ impl VTScreen for Screen {
         if rows < self.size.1 {
             let diff = self.size.1 - rows;
 
+            // FIXME: try to remove empty lines from back first
+
             for _ in 0 .. diff {
                 let _line = self.lines.pop_front();
                 // TODO: Scrollback
@@ -454,7 +474,7 @@ impl VTScreen for Screen {
             self.cursor.y = self.cursor.y.saturating_sub(diff);
         } else if rows > self.size.1 {
             for _ in self.size.1 .. rows {
-                self.lines.push_back(Line::new(Char::with_style(self.cursor.style), cols));
+                self.lines.push_back(Line::new(Cell::with_style(self.cursor.style), cols));
             }
         }
 
@@ -594,7 +614,7 @@ impl VTScreen for Screen {
     }
 
     fn alignment_test(&mut self) {
-        let eeeeee = Line::new(Char::new('E', self.cursor.style), self.size.0);
+        let eeeeee = Line::new(Cell::new('E', self.cursor.style), self.size.0);
         for line in self.lines.iter_mut() {
             *line = eeeeee.clone();
         }

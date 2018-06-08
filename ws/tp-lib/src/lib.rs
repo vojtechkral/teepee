@@ -10,8 +10,11 @@ use std::thread;
 use std::process::Command;
 use std::os::unix::io::{RawFd, AsRawFd};
 
-use tp_pty::{Process, TermSize};
-use tp_term::Term;
+pub mod term { pub use tp_term::*; }
+pub mod pty { pub use tp_pty::*; }
+
+use pty::{Process, TermSize};
+use term::Term;
 
 
 mod err {
@@ -43,7 +46,7 @@ pub use err::*;
 pub struct Session {
     ps: Process,
     buffer: Vec<u8>,
-    term: Term,
+    pub term: Term,
 }
 
 impl Session {

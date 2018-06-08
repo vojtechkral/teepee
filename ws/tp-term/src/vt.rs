@@ -31,23 +31,7 @@ impl Default for VTRendition {
     }
 }
 
-bitflags! {
-    pub struct VTMode: u8 {
-        const Wrap         = 1 << 0;
-        const Origin       = 1 << 1;
-        const NewLine      = 1 << 2;
-        const Insert       = 1 << 3;
-        const ReverseVideo = 1 << 4;
-    }
-}
-
-impl Default for VTMode {
-    fn default() -> VTMode {
-        VTMode::Wrap
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VTColor {
     Default,
     Indexed(u8),
@@ -104,7 +88,7 @@ impl Default for VTColor {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VTCharset {
     /// Encoded 'B', the "regular" charset. Actually means UTF-8.
     UsAscii,
@@ -129,7 +113,23 @@ impl Default for VTCharset {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+bitflags! {
+    pub struct VTMode: u8 {
+        const Wrap         = 1 << 0;
+        const Origin       = 1 << 1;
+        const NewLine      = 1 << 2;
+        const Insert       = 1 << 3;
+        const ReverseVideo = 1 << 4;
+    }
+}
+
+impl Default for VTMode {
+    fn default() -> VTMode {
+        VTMode::Wrap
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VTErase {
     All,
     Above,
@@ -197,7 +197,7 @@ impl ops::DerefMut for Params {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     // Text input states
     Ground,
@@ -219,7 +219,7 @@ enum State {
 
 use self::State::*;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VTReport {
     AnswerBack,
     PrimaryAttrs,
@@ -228,7 +228,19 @@ pub enum VTReport {
     CursorPos,
     TermParams0,
     TermParams1,
-    Bell,
+    Bell,   // XXX: move
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VTScreenChoice {
+    Primary,
+    Alternate,
+}
+
+impl Default for VTScreenChoice {
+    fn default() -> VTScreenChoice {
+        VTScreenChoice::Primary
+    }
 }
 
 pub trait VTScreen {
@@ -250,7 +262,7 @@ pub trait VTScreen {
     fn tabs_clear(&mut self);
 
     fn reset(&mut self);
-    fn resize(&mut self, cols: u32, rows: u32);
+    fn resize(&mut self, cols: u32, rows: u32);   // XXX: this probably shouldn't be part of the trait
 
     /// Scroll screen or the scrolling region if any.
     /// Positive `num` is for scrolling up, negative for scrolling down.
@@ -298,9 +310,22 @@ pub trait VTScreen {
 pub trait VTDispatch {
     type Screen: VTScreen;
 
+    /// Reference the current screen
     fn screen(&mut self) -> &mut Self::Screen;
 
+    /// Reference the primary screen
+    fn screen_primary(&mut self) -> &mut Self::Screen;
+
+    /// Reference the alternate screen
+    fn screen_alternate(&mut self) -> &mut Self::Screen;
+
+    /// Set current screen
+    fn switch_screen(&mut self, screen: VTScreenChoice);
+
+    /// Set mode on both screens
     fn set_mode(&mut self, mode: VTMode, enable: bool);
+
+    /// Queue up a terminal report request
     fn report_request(&mut self, report: VTReport);
 
     // TP extensions:
@@ -445,6 +470,34 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         }
     }
 
+    fn csi_modes_dec(&mut self, enable: bool) {
+        for m in self.p.params.iter() {
+            match *m {
+                5 => self.d.set_mode(VTMode::ReverseVideo, enable),
+                6 => {
+                    self.d.set_mode(VTMode::Origin, enable);
+                    self.d.screen_primary().cursor_set(Some(1), Some(1));
+                    self.d.screen_alternate().cursor_set(Some(1), Some(1));
+                },
+                20 => self.d.set_mode(VTMode::NewLine, enable),   // FIXME: also applies to input
+                47 | 1047 if  enable => self.d.switch_screen(VTScreenChoice::Primary),
+                47 | 1047 if !enable => self.d.switch_screen(VTScreenChoice::Alternate),
+                1048 if  enable => self.d.screen().cursor_save(),
+                1048 if !enable => self.d.screen().cursor_load(),
+                1049 if  enable => {
+                    self.d.screen_primary().cursor_save();
+                    self.d.switch_screen(VTScreenChoice::Alternate);
+                    self.d.screen_alternate().erase(VTErase::All);
+                },
+                1049 if !enable => {
+                    self.d.switch_screen(VTScreenChoice::Primary);
+                    self.d.screen_primary().cursor_load();
+                },
+                _ => {},
+            }
+        }
+    }
+
     /// Character rendition setting. The one escape sequence people actually know to exist.
     fn csi_sgr(&mut self) {
         if self.p.params.len() == 0 {
@@ -534,11 +587,12 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         if self.p.interm1 != 0 {
             match (self.p.interm1, byte) {
                 (b'>', b'c') => self.d.report_request(VTReport::SecondaryAttrs),
-                // XXX: support these?
-                // case csi("?h"): csi_dec_modes_set(); break;
-                // case csi("?l"): if (csi_dec_modes_decanm()) fgoto vt52; break;
-                // case csi("?r"): /* TODO: restore mode */ break; /* xterm specific ? */
-                // case csi("?s"): /* TODO: save mode */ break;    /* xterm specific ? */
+                (b'?', b'h') => self.csi_modes_dec(true),
+                (b'?', b'l') => self.csi_modes_dec(false),
+
+                // XXX: support these? xterm specific?
+                // case csi("?r"): /* restore mode */ break;
+                // case csi("?s"): /* save mode */ break;
                 _ => {},
             }
             return Ground;
@@ -744,3 +798,119 @@ impl VTParser {
     }
 }
 
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem;
+
+
+    type Call = (&'static str, Vec<String>);
+
+    macro_rules! call {
+        ($name:ident) => ((stringify!($name), vec![]));
+        ($name:ident, $($arg:expr),*) => ((stringify!($name), vec![$(format!("{:?}", $arg)),*]));
+    }
+
+    #[derive(Debug, Default)]
+    struct TestDispatch {
+        calls: Vec<Call>,
+    }
+
+    impl TestDispatch {
+        fn calls(&mut self) -> Vec<Call> { mem::replace(&mut self.calls, vec![]) }
+    }
+
+    macro_rules! dispatch_impl {
+        ($name:ident) => {
+            fn $name(&mut self) { self.calls.push((call!($name))) }
+        };
+        ($name:ident, $($arg:ident : $ty:ty),+) => {
+            fn $name(&mut self, $($arg : $ty),*) { self.calls.push(call!($name, $($arg),*)) }
+        };
+    }
+
+    impl VTScreen for TestDispatch {
+        dispatch_impl!(put_char, ch: char);
+        dispatch_impl!(put_chars, num: u32);
+        dispatch_impl!(newline);
+        dispatch_impl!(index, forward: bool);
+        dispatch_impl!(next_line);
+        dispatch_impl!(erase, erase: VTErase);
+        dispatch_impl!(tab, tabs: i32);
+        dispatch_impl!(tab_set, tab: bool);
+        dispatch_impl!(tabs_clear);
+        dispatch_impl!(reset);
+        dispatch_impl!(resize, cols: u32, rows: u32);
+        dispatch_impl!(scroll, num: i32);
+        dispatch_impl!(scroll_at_cursor, num: i32);
+        dispatch_impl!(set_scroll_region, top: u32, bottom: u32);
+        dispatch_impl!(set_mode, mode: VTMode, enable: bool);
+        dispatch_impl!(set_rendition, rend: VTRendition, enable: bool);
+        dispatch_impl!(set_fg, color: VTColor);
+        dispatch_impl!(set_bg, color: VTColor);
+        dispatch_impl!(charset_use, slot: u32);
+        dispatch_impl!(charset_designate, slot: u32, charset: VTCharset);
+        dispatch_impl!(cursor_set, x: Option<u32>, y: Option<u32>);
+        dispatch_impl!(cursor_move, x: i32, y: i32);
+        dispatch_impl!(cursor_save);
+        dispatch_impl!(cursor_load);
+        dispatch_impl!(alignment_test);
+    }
+
+    impl VTDispatch for TestDispatch {
+        type Screen = TestDispatch;
+
+        fn screen(&mut self) -> &mut Self::Screen { self }
+        fn screen_primary(&mut self) -> &mut Self::Screen { self }
+        fn screen_alternate(&mut self) -> &mut Self::Screen { self }
+
+        dispatch_impl!(switch_screen, screen: VTScreenChoice);
+        dispatch_impl!(set_mode, mode: VTMode, enable: bool);
+        dispatch_impl!(report_request, report: VTReport);
+    }
+
+    macro_rules! parse {
+        ($input:expr) => {{
+            let mut parser = VTParser::new();
+            let mut dispatch = TestDispatch::default();
+            parser.input($input, &mut dispatch);
+            dispatch.calls()
+        }};
+    }
+
+    #[test]
+    fn put_char() {
+        assert_eq!(parse!(b"Hello!"), vec![
+            call!(put_char, 'H'),
+            call!(put_char, 'e'),
+            call!(put_char, 'l'),
+            call!(put_char, 'l'),
+            call!(put_char, 'o'),
+            call!(put_char, '!'),
+        ]);
+    }
+
+    #[test]
+    fn cancelations() {
+        assert_eq!(parse!(b"\x1b[1;30\x18\x1b[34m"), vec![ call!(set_fg, VTColor::Indexed(4)) ]);
+        assert_eq!(parse!(b"\x1b[1;30\x1a\x1b[34m"), vec![ call!(set_fg, VTColor::Indexed(4)) ]);
+    }
+
+    #[test]
+    fn interleave_csi_c0() {
+        assert_eq!(parse!(b"\x1b[1;\x0530\x18\x1b[3\x0e4m"), vec![
+            call!(report_request, VTReport::AnswerBack),
+            call!(charset_use, 1),
+            call!(set_fg, VTColor::Indexed(4)),
+        ]);
+    }
+
+    #[test]
+    fn alignment_test() {
+        assert_eq!(parse!(b"\x1b#8"), vec![ call!(alignment_test) ]);
+    }
+
+    // TODO: more tests
+}
