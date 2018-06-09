@@ -4,7 +4,7 @@ extern crate gtk;
 extern crate gio;
 extern crate cairo;
 
-extern crate tp_lib as tp;
+extern crate tp_app as tp;
 
 mod giochannel;
 mod termwidget;
