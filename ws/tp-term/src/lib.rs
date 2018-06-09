@@ -1,7 +1,5 @@
-// #[macro_use] extern crate nom;
 #[macro_use] extern crate bitflags;
 extern crate smallvec;
-// extern crate unicode_normalization;
 extern crate unicode_width;
 #[macro_use] extern crate error_chain;
 
@@ -100,7 +98,7 @@ impl Term {
         }
     }
 
-    pub fn input(&mut self, data: &[u8]) {
+    pub fn write(&mut self, data: &[u8]) {
         self.parser.input(data, &mut self.state);
     }
 }

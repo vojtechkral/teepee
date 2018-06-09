@@ -64,7 +64,7 @@ impl Session {
         if avail > 0 {
             let actually_read = self.ps.read(&mut self.buffer)?;
             if actually_read > 0 {
-                self.term.input(&self.buffer[0..actually_read]);
+                self.term.write(&self.buffer[0..actually_read]);
             }
             Ok(actually_read)
         } else {
