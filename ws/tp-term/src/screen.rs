@@ -570,6 +570,9 @@ impl VTScreen for Screen {
         self.cursor.y = 0;
     }
 
+
+    fn mode(&self) -> VTMode { self.mode }
+
     fn set_mode(&mut self, mode: VTMode, enable: bool) {
         self.mode.set(mode, enable);
     }
@@ -585,6 +588,8 @@ impl VTScreen for Screen {
     fn charset_designate(&mut self, slot: u32, charset: VTCharset) { self.cursor.charset_designate(slot, charset); }
 
     fn reset(&mut self) { unimplemented!() }
+
+    fn cursor_pos(&self) -> (u32, u32) { (self.cursor.x + 1, self.cursor.y + 1) }
 
     fn cursor_set(&mut self, x: Option<u32>, y: Option<u32>) {
         if let Some(y) = y {

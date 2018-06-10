@@ -1,33 +1,39 @@
 #[macro_use] extern crate bitflags;
 extern crate smallvec;
 extern crate unicode_width;
-#[macro_use] extern crate error_chain;
 
+use std::mem;
 use std::ops;
+
+use smallvec::SmallVec;
 
 pub mod utf8;
 mod smallstring;
 mod screen;
 mod vt;
+mod input;
 pub use smallstring::*;
 pub use screen::*;
 pub use vt::*;
+pub use input::*;
 
 
-mod err {
-    error_chain! {
-    }
+#[derive(Debug, Clone, Default)]
+pub struct TermUpdate {
+    // scrolled_up: usize,  // FIXME: move to screen
+    screen_switched: bool,
+    bell: bool,
+    report_requests: SmallVec<[VTReport; 4]>,
 }
-pub use err::*;
-
 
 #[derive(Debug)]
 pub struct TermState {
     screen_current: VTScreenChoice,
     screen_primary: Screen,
     screen_alternate: Screen,
-    screen_choice_prev: VTScreenChoice,
-    // TODO: scrollback, request queue
+    // screen_choice_prev: VTScreenChoice,   // TODO: remove in favor of *Update
+    update: TermUpdate,
+    // TODO: scrollback
 }
 
 impl TermState {
@@ -36,14 +42,19 @@ impl TermState {
             screen_current: VTScreenChoice::default(),
             screen_primary: Screen::default(),
             screen_alternate: Screen::default(),
-            screen_choice_prev: VTScreenChoice::default(),
+            // screen_choice_prev: VTScreenChoice::default(),
+            update: TermUpdate::default(),
         }
     }
 
-    pub fn screen_switched(&mut self) -> bool {
-        let res = self.screen_choice_prev != self.screen_current;
-        self.screen_choice_prev = self.screen_current;
-        res
+    // pub fn screen_switched(&mut self) -> bool {
+    //     let res = self.screen_choice_prev != self.screen_current;
+    //     self.screen_choice_prev = self.screen_current;
+    //     res
+    // }
+
+    pub fn reset_update(&mut self) -> TermUpdate {
+        mem::replace(&mut self.update, TermUpdate::default())
     }
 
     pub fn screen_resize(&mut self, cols: u32, rows: u32) {
@@ -55,7 +66,14 @@ impl TermState {
 impl VTDispatch for TermState {
     type Screen = Screen;
 
-    fn screen(&mut self) -> &mut Self::Screen {
+    fn screen(&self) -> &Self::Screen {
+        match self.screen_current {
+            VTScreenChoice::Primary => &self.screen_primary,
+            VTScreenChoice::Alternate => &self.screen_alternate,
+        }
+    }
+
+    fn screen_mut(&mut self) -> &mut Self::Screen {
         match self.screen_current {
             VTScreenChoice::Primary => &mut self.screen_primary,
             VTScreenChoice::Alternate => &mut self.screen_alternate,
@@ -66,18 +84,23 @@ impl VTDispatch for TermState {
     fn screen_alternate(&mut self) -> &mut Self::Screen { &mut self.screen_alternate }
 
     fn switch_screen(&mut self, screen: VTScreenChoice) {
+        if (screen != self.screen_current) {
+            self.update.screen_switched = true;
+        }
         self.screen_current = screen;
     }
 
     fn set_mode(&mut self, mode: VTMode, enable: bool) {
-        // TODO: set mode on both screens
         self.screen_primary.set_mode(mode, enable);
         self.screen_alternate.set_mode(mode, enable);
     }
 
     fn report_request(&mut self, report: VTReport) {
-        // TODO: push an event, same with report requests
-        unimplemented!()
+        self.update.report_requests.push(report);
+    }
+
+    fn bell(&mut self) {
+        self.update.bell = true;
     }
 
     // TP extensions:
@@ -88,6 +111,7 @@ impl VTDispatch for TermState {
 pub struct Term {
     parser: VTParser,
     state: TermState,
+    input: VTInput,
 }
 
 impl Term {
@@ -95,11 +119,20 @@ impl Term {
         Term {
             parser: VTParser::new(),
             state: TermState::new(),
+            input: VTInput,
         }
     }
 
     pub fn write(&mut self, data: &[u8]) {
         self.parser.input(data, &mut self.state);
+    }
+
+    fn input(&self, keymod: KeyMod, buffer: &mut [u8]) -> Result<usize, ()> {
+        self.input.input(self.screen(), keymod, buffer)
+    }
+
+    fn report_answer(&self, report: VTReport, buffer: &mut [u8]) -> Result<usize, ()> {
+        self.input.report_answer(self.screen(), report, buffer)
     }
 }
 

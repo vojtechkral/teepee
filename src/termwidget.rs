@@ -124,7 +124,7 @@ impl TermWidget {
     pub fn render(&self, cr: &Cairo, session: &mut tp::Session) {
         // let mut y = 20.0;
         // let mut x = 0.0;
-        for (y, line) in session.term.screen().line_iter().enumerate() {
+        for (y, line) in session.term.screen_mut().line_iter().enumerate() {
             for (x, cell) in line.iter_mut().enumerate() {
                 // cr.move_to(x, y);
                 // cr.show_text(c.as_str());

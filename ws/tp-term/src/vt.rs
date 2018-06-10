@@ -228,7 +228,6 @@ pub enum VTReport {
     CursorPos,
     TermParams0,
     TermParams1,
-    Bell,   // XXX: move
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +248,6 @@ pub trait VTScreen {
     /// Insert `num` default (empty) characters
     fn put_chars(&mut self, num: u32);
     fn newline(&mut self);
-    // fn bell(&mut self);
     fn index(&mut self, forward: bool);
     fn next_line(&mut self);
     /// Performs an erase operation pertaining to current cursor location.
@@ -281,6 +279,7 @@ pub trait VTScreen {
     /// Note that `1` means "the first line" (ie. 1-indexing).
     fn set_scroll_region(&mut self, top: u32, bottom: u32);
 
+    fn mode(&self) -> VTMode;
     fn set_mode(&mut self, mode: VTMode, enable: bool);
     fn set_rendition(&mut self, rend: VTRendition, enable: bool);
     fn set_fg(&mut self, color: VTColor);
@@ -289,6 +288,9 @@ pub trait VTScreen {
     fn charset_use(&mut self, slot: u32);
     fn charset_designate(&mut self, slot: u32, charset: VTCharset);
 
+    /// Get curront cursor coordinates, horizontal and vertical respectively.
+    /// Note: the returnes coordinates must be 1-indexed.
+    fn cursor_pos(&self) -> (u32, u32);
     /// Set cursor absolute position
     /// Note that the coordinates are 1-indexed.
     fn cursor_set(&mut self, x: Option<u32>, y: Option<u32>);
@@ -311,7 +313,10 @@ pub trait VTDispatch {
     type Screen: VTScreen;
 
     /// Reference the current screen
-    fn screen(&mut self) -> &mut Self::Screen;
+    fn screen(&self) -> &Self::Screen;
+
+    /// Reference the current screen
+    fn screen_mut(&mut self) -> &mut Self::Screen;
 
     /// Reference the primary screen
     fn screen_primary(&mut self) -> &mut Self::Screen;
@@ -325,8 +330,11 @@ pub trait VTDispatch {
     /// Set mode on both screens
     fn set_mode(&mut self, mode: VTMode, enable: bool);
 
-    /// Queue up a terminal report request
+    /// Enqueue a terminal report request
     fn report_request(&mut self, report: VTReport);
+
+    /// Enqueue a bell signal in the current shell
+    fn bell(&mut self);
 
     // TP extensions:
     // TODO
@@ -349,7 +357,7 @@ struct Dispatcher<'s, 'd, D: VTDispatch + 'static> {
 
 impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
     fn screen(&mut self) -> &mut D::Screen {
-        self.d.screen()
+        self.d.screen_mut()
     }
 
     fn clear(&mut self) {
@@ -384,8 +392,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
                     // Ignored: NUL, SOH, STX, ETX, EOT, ACK, DLE, DC1, DC2, DC3, DC4, NAK, SYN, ETB1, FS, GS, RS, US
                 },
             5 /* ENQ */ => self.d.report_request(VTReport::AnswerBack),
-            // 7 /* BEL */ => self.screen().bell(),
-            7 /* BEL */ => self.d.report_request(VTReport::Bell),
+            7 /* BEL */ => self.d.bell(),
             8 /* BS */  => self.screen().cursor_move(-1, 0),
             9 /* HT */  => self.screen().tab(1),
             0xa ... 0xc /* LF, VT, FF */ => self.screen().newline(),
@@ -409,24 +416,27 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
     fn escape(&mut self, byte: u8) -> State {
         self.clear();   // Legal, because we'll transition to another state
 
-        let d = &mut self.d;
+        if byte == b'Z' {
+            self.d.report_request(VTReport::PrimaryAttrs);
+            return Ground;
+        }
 
+        let screen = self.d.screen_mut();
         match byte {
             0x20 ... 0x2f => {
                 self.p.interm1 = byte;
                 return EscapeInterm;
             },
 
-            b'D' => d.screen().index(true),
-            b'E' => d.screen().next_line(),
-            b'H' => d.screen().tab_set(true),
-            b'M' => d.screen().index(false),
-            b'Z' => d.report_request(VTReport::PrimaryAttrs),
-            b'7' => d.screen().cursor_save(),
-            b'8' => d.screen().cursor_load(),
-            b'c' => d.screen().reset(),
-            b'n' => d.screen().charset_use(2),
-            b'o' => d.screen().charset_use(3),
+            b'D' => screen.index(true),
+            b'E' => screen.next_line(),
+            b'H' => screen.tab_set(true),
+            b'M' => screen.index(false),
+            b'7' => screen.cursor_save(),
+            b'8' => screen.cursor_load(),
+            b'c' => screen.reset(),
+            b'n' => screen.charset_use(2),
+            b'o' => screen.charset_use(3),
 
             b'[' => return CsiEntry,
             b'_' => return ApcEntry,
@@ -482,8 +492,8 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
                 20 => self.d.set_mode(VTMode::NEWLINE, enable),   // FIXME: also applies to input
                 47 | 1047 if  enable => self.d.switch_screen(VTScreenChoice::Primary),
                 47 | 1047 if !enable => self.d.switch_screen(VTScreenChoice::Alternate),
-                1048 if  enable => self.d.screen().cursor_save(),
-                1048 if !enable => self.d.screen().cursor_load(),
+                1048 if  enable => self.d.screen_mut().cursor_save(),
+                1048 if !enable => self.d.screen_mut().cursor_load(),
                 1049 if  enable => {
                     self.d.screen_primary().cursor_save();
                     self.d.switch_screen(VTScreenChoice::Alternate);
@@ -505,7 +515,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
             return;
         }
 
-        let screen = &mut self.d.screen();
+        let screen = &mut self.d.screen_mut();
         let mut it = self.p.params.iter().map(|p| *p);
         while let Some(p) = it.next() {
             match p {
@@ -619,30 +629,34 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
             },
         }
 
-        let d = &mut self.d;
+        if byte == b'c' {
+            self.d.report_request(VTReport::PrimaryAttrs);
+            return Ground;
+        }
+
+        let screen = self.d.screen_mut();
         let params = &self.p.params;
 
         match byte {
-            b'@' => d.screen().put_chars(params.get(0, 1) as u32),
-            b'A' => d.screen().cursor_move(0, -params.get(0, 1)),
-            b'B' => d.screen().cursor_move(0,  params.get(0, 1)),
-            b'C' => d.screen().cursor_move( params.get(0, 1), 0),
-            b'D' => d.screen().cursor_move(-params.get(0, 1), 0),
-            b'G' => d.screen().cursor_set(Some(params.get(0, 1) as u32), None),
-            b'f' | b'H' => d.screen().cursor_set(Some(params.get(1, 1) as u32), Some(params.get(0, 1) as u32)),
-            b'I' => d.screen().tab(params.get(0, 1)),
-            b'L' => d.screen().scroll_at_cursor(-params.get(0, 1)),
-            b'M' => d.screen().scroll_at_cursor(params.get(0, 1)),
-            b'P' => d.screen().erase(VTErase::NumChars(params.get(0, 1) as u32)),   // TODO: is this right?
-            b'S' => d.screen().scroll( params.get(0, 1)),
-            b'T' => d.screen().scroll(-params.get(0, 1)),
-            b'X' => d.screen().erase(VTErase::NumChars(params.get(0, 1) as u32)),
-            b'Z' => d.screen().tab(-params.get(0, 1)),
-            b'c' => d.report_request(VTReport::PrimaryAttrs),
-            b'd' => d.screen().cursor_set(None, Some(params.get(0, 1) as u32)),
-            b'r' => d.screen().set_scroll_region(params.get(0, 0) as u32, params.get(1, 0) as u32),
-            b's' => d.screen().cursor_save(),
-            b'u' => d.screen().cursor_load(),
+            b'@' => screen.put_chars(params.get(0, 1) as u32),
+            b'A' => screen.cursor_move(0, -params.get(0, 1)),
+            b'B' => screen.cursor_move(0,  params.get(0, 1)),
+            b'C' => screen.cursor_move( params.get(0, 1), 0),
+            b'D' => screen.cursor_move(-params.get(0, 1), 0),
+            b'G' => screen.cursor_set(Some(params.get(0, 1) as u32), None),
+            b'f' | b'H' => screen.cursor_set(Some(params.get(1, 1) as u32), Some(params.get(0, 1) as u32)),
+            b'I' => screen.tab(params.get(0, 1)),
+            b'L' => screen.scroll_at_cursor(-params.get(0, 1)),
+            b'M' => screen.scroll_at_cursor(params.get(0, 1)),
+            b'P' => screen.erase(VTErase::NumChars(params.get(0, 1) as u32)),   // TODO: is this right?
+            b'S' => screen.scroll( params.get(0, 1)),
+            b'T' => screen.scroll(-params.get(0, 1)),
+            b'X' => screen.erase(VTErase::NumChars(params.get(0, 1) as u32)),
+            b'Z' => screen.tab(-params.get(0, 1)),
+            b'd' => screen.cursor_set(None, Some(params.get(0, 1) as u32)),
+            b'r' => screen.set_scroll_region(params.get(0, 0) as u32, params.get(1, 0) as u32),
+            b's' => screen.cursor_save(),
+            b'u' => screen.cursor_load(),
             _ => {
                 // Other sequences ignored either by specification or because we don't implement them
             },
