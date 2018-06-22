@@ -33,11 +33,10 @@ impl Cell {
         res
     }
 
-    pub fn with_style(style: Style) -> Cell {   // You gotta do stuff with_style!
+    pub fn with_style(style: Style) -> Cell {
         let mut ch = Cell::default();
         ch.style = style;
         ch
-        // Yeah, I know it was a bad joke...
     }
 
     // pub fn combine(&mut self, what: char) {
@@ -70,7 +69,6 @@ impl Cell {
         self.set_dirty(true);
     }
 
-    // TODO: &str
     pub fn as_str(&self) -> &str {
         self.chars.as_ref()
     }
@@ -296,10 +294,8 @@ impl Default for Screen {
 
 impl VTScreen for Screen {
     fn put_char(&mut self, ch: char) {
-        println!("put_char: {} @ ({}, {})", ch, self.x(), self.y());
-
         let ch = match (self.cursor.charset, ch as usize) {
-            (VTCharset::Graphics, ord @ 0x5f ... 0x7e) => GRAPHICS[ord],
+            (VTCharset::Graphics, ord @ 0x5f ... 0x7e) => GRAPHICS[ord - 0x5f],
             _ => ch,
         };
 
@@ -472,6 +468,10 @@ impl VTScreen for Screen {
             }
 
             self.cursor.y = self.cursor.y.saturating_sub(diff);
+
+            // Fix scrolling region if needed
+            self.scroll_rg.1 = self.scroll_rg.1.min(rows - 1);
+            self.scroll_rg.0 = self.scroll_rg.0.min(self.scroll_rg.1 - 1);
         } else if rows > self.size.1 {
             for _ in self.size.1 .. rows {
                 self.lines.push_back(Line::new(Cell::with_style(self.cursor.style), cols));

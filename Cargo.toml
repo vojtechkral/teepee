@@ -8,6 +8,8 @@ glib = "^0"
 glib-sys = "^0"
 gio = "^0"
 gtk = "^0"
+gdk = "^0"
+gdk-sys = "^0"
 cairo-rs = "^0"
 tp-app = { path = "ws/tp-app" }
 

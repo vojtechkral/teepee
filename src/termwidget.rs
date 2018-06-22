@@ -1,14 +1,18 @@
+use std::mem;
 use std::fmt;
+use std::ffi::CStr;
 
+use glib::translate::ToGlibPtr;
 use gtk;
 use gtk::prelude::*;
-// use gtk::WidgetExt;
+use gdk;
+use gdk_sys;
 use cairo;
 use cairo::Context as Cairo;
 use cairo::{FontFace, FontExtents, FontSlant, FontWeight};
 
 use tp;
-use tp::term::{Cell, VTDispatch, VTRendition};
+use tp::term::{Cell, VTDispatch, VTRendition, InputData, Modifier, Key};
 
 
 struct Font {
@@ -42,19 +46,10 @@ impl Font {
             descent: exts.descent
         }
     }
-
-    // fn textpos(&self, x: u32, y: u32) -> (f64, f64) {
-    //     (x as f64 * self.cellw, y as f64 * self.cellh + self.cellh - self.descent)
-    // }
-
-    // fn cellpos(&self, x: u32, y: u32) -> (f64, f64) {
-    //     (x as f64 * self.cellw, y as f64 * self.cellh)
-    // }
 }
 
 impl Default for Font {
     fn default() -> Font {
-        // Font::new("Monospace".to_owned(), 11.0)
         Font::new("Monospace".to_owned(), 15.0)
     }
 }
@@ -71,6 +66,54 @@ impl fmt::Debug for Font {
     }
 }
 
+struct ModifierType(gdk::ModifierType);
+
+impl From<ModifierType> for Modifier {
+    fn from(modifier: ModifierType) -> Modifier {
+        let bits = modifier.0.bits();
+        let bits = bits & 1 | bits & 4 | bits & 8 << 2;
+        Modifier::from_bits_truncate(bits as u8)
+    }
+}
+
+struct EventKey<'a>(&'a gdk::EventKey);
+
+// TODO: Use TryFrom when it's stable
+impl<'a> From<EventKey<'a>> for Option<InputData<'a>> {
+    fn from(evt: EventKey<'a>) -> Option<InputData<'a>> {
+        use gdk::enums::key;
+        use gdk_sys::*;
+
+        let keyval = evt.0.get_keyval();
+        let unicode = unsafe { gdk_sys::gdk_keyval_to_unicode(keyval as _) };
+        let unicode: char = unsafe { mem::transmute(unicode) };
+        println!("unicode: {} = {}", unicode, unicode as u32);
+        let modifier: Modifier = ModifierType(evt.0.get_state()).into();
+        println!("modifier: {:?}", modifier);
+
+        Some(match keyval {
+            key::Return    | key::KP_Enter     => InputData::Key(Key::Return, modifier),
+            key::Tab                           => InputData::Key(Key::Tab, modifier),
+            key::BackSpace                     => InputData::Key(Key::Backspace, modifier),
+            key::Up        | key::KP_Up        => InputData::Key(Key::Up, modifier),
+            key::Down      | key::KP_Down      => InputData::Key(Key::Down, modifier),
+            key::Right     | key::KP_Right     => InputData::Key(Key::Right, modifier),
+            key::Left      | key::KP_Left      => InputData::Key(Key::Left, modifier),
+            key::Page_Up   | key::KP_Page_Up   => InputData::Key(Key::PageUp, modifier),
+            key::Page_Down | key::KP_Page_Down => InputData::Key(Key::PageDown, modifier),
+            key::Home      | key::KP_Home      => InputData::Key(Key::Home, modifier),
+            key::End       | key::KP_End       => InputData::Key(Key::End, modifier),
+            key::Insert    | key::KP_Insert    => InputData::Key(Key::Insert, modifier),
+            key::Delete    | key::KP_Delete    => InputData::Key(Key::Delete, modifier),
+
+            key::F1 ... key::F35 => InputData::FKey((keyval - key::F1 + 1) as u8, modifier),
+            key::KP_F1 ... key::KP_F4 => InputData::FKey((keyval - key::KP_F1 + 1) as u8, modifier),
+
+            _ if unicode != '\0' => InputData::Char(unicode, modifier),
+            _ => return None,
+        })
+    }
+}
 
 #[derive(Debug)]
 pub struct TermWidget {
@@ -80,19 +123,10 @@ pub struct TermWidget {
 
 impl TermWidget {
     pub fn new() -> TermWidget {
-        // let draw_area = gtk::DrawingArea::new();
+        let draw_area = gtk::DrawingArea::new();
 
-        // let widget = Rc::new(TermWidget {
-        //     draw_area
-        // });
-
-        // let widget_ = widget.clone();
-        // widget.draw_area.connect_draw(move |_, cr| {
-        //     widget_.redraw(cr);
-        //     Inhibit(false)
-        // });
-
-        // widget
+        // Enable key press events
+        draw_area.add_events(gdk::EventMask::KEY_PRESS_MASK.bits() as i32);
 
         TermWidget {
             draw_area: gtk::DrawingArea::new(),
@@ -122,35 +156,12 @@ impl TermWidget {
     }
 
     pub fn render(&self, cr: &Cairo, session: &mut tp::Session) {
-        // let mut y = 20.0;
-        // let mut x = 0.0;
         for (y, line) in session.term.screen_mut().line_iter().enumerate() {
             for (x, cell) in line.iter_mut().enumerate() {
-                // cr.move_to(x, y);
-                // cr.show_text(c.as_str());
                 self.render_cell(cr, cell, x, y);
-
-                // x += 10.0;
             }
-
-            // x = 0.0;
-            // y += 20.0;
         }
     }
-
-    // pub fn connect_draw<T>(container: Rc<T>) where T: 'static + AsRef<TermWidget> + AsRef<tp::Session> {
-    //     let term_widget: &TermWidget = (*container).as_ref();
-
-    //     let container_ = container.clone();
-    //     term_widget.draw_area.connect_draw(move |_, cr| {
-    //         let term_widget: &TermWidget = (*container_).as_ref();
-    //         let session: &tp::Session = (*container_).as_ref();
-
-    //         term_widget.redraw(cr, session);
-
-    //         Inhibit(false)
-    //     });
-    // }
 
     pub fn connect_draw<F>(&self, func: F)
     where F: Fn(&Cairo) + 'static {
@@ -166,6 +177,30 @@ impl TermWidget {
             func();
             false
         });
+    }
+
+    // XXX: TODO
+    pub fn connect_input<F>(&self, func: F)
+    where F: Fn(InputData) + 'static {
+        self.draw_area.connect_key_press_event(move |_, evt| {
+            println!("key press: {:?}", evt);
+
+            // TODO: https://stackoverflow.com/questions/40011838/how-to-receive-characters-from-input-method-in-gtk2
+            // (Or do whatever Gnome vte widget does)
+
+            let input: Option<InputData> = EventKey(evt).into();
+            if let Some(input) = input {
+                func(input);
+            }
+
+            Inhibit(false)
+        });
+    }
+
+    pub fn grab_focus(&self) {
+        self.draw_area.set_can_focus(true);   // Apparently this needs to be done when the ui is built
+        self.draw_area.grab_focus();
+        println!("has focus: {}", self.draw_area.has_focus());
     }
 
     pub fn queue_draw(&self) {

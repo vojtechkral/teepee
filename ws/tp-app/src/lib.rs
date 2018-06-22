@@ -14,7 +14,7 @@ pub mod term { pub use tp_term::*; }
 pub mod pty { pub use tp_pty::*; }
 
 use pty::{Process, TermSize};
-use term::Term;
+use term::{Term, InputData};
 
 
 mod err {
@@ -43,6 +43,12 @@ pub use err::*;
 // }
 
 
+// #[derive(Debug)]
+// pub enum Input<'a> {
+//     Key(InputKey),
+//     Str(&'a str),
+// }
+
 pub struct Session {
     ps: Process,
     buffer: Vec<u8>,
@@ -70,6 +76,15 @@ impl Session {
         } else {
             Ok(0)
         }
+    }
+
+    pub fn input(&mut self, input: InputData) -> Result<usize> {
+        if let InputData::Str(string) = input {
+            self.ps.write(string.as_bytes())
+        } else {
+            let size = self.term.input(input, &mut self.buffer).expect("Input buffer not large enough");
+            self.ps.write(&self.buffer[0..size])
+        }.map_err(io::Error::into)
     }
 
     pub fn pk(&mut self) {    // XXX

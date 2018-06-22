@@ -42,16 +42,9 @@ impl TermState {
             screen_current: VTScreenChoice::default(),
             screen_primary: Screen::default(),
             screen_alternate: Screen::default(),
-            // screen_choice_prev: VTScreenChoice::default(),
             update: TermUpdate::default(),
         }
     }
-
-    // pub fn screen_switched(&mut self) -> bool {
-    //     let res = self.screen_choice_prev != self.screen_current;
-    //     self.screen_choice_prev = self.screen_current;
-    //     res
-    // }
 
     pub fn reset_update(&mut self) -> TermUpdate {
         mem::replace(&mut self.update, TermUpdate::default())
@@ -60,6 +53,7 @@ impl TermState {
     pub fn screen_resize(&mut self, cols: u32, rows: u32) {
         self.screen_primary.resize(cols, rows);
         self.screen_alternate.resize(cols, rows);
+        // FIXME: pty resize
     }
 }
 
@@ -127,11 +121,11 @@ impl Term {
         self.parser.input(data, &mut self.state);
     }
 
-    fn input(&self, keymod: KeyMod, buffer: &mut [u8]) -> Result<usize, ()> {
-        self.input.input(self.screen(), keymod, buffer)
+    pub fn input(&self, input: InputData, buffer: &mut [u8]) -> Result<usize, ()> {
+        self.input.input(self.screen(), input, buffer)
     }
 
-    fn report_answer(&self, report: VTReport, buffer: &mut [u8]) -> Result<usize, ()> {
+    pub fn report_answer(&self, report: VTReport, buffer: &mut [u8]) -> Result<usize, ()> {
         self.input.report_answer(self.screen(), report, buffer)
     }
 }

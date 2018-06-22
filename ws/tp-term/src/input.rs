@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{self, Write};
 
 use ::vt::*;
 use ::screen::Screen;
@@ -6,6 +6,7 @@ use ::screen::Screen;
 
 /// Input Key
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
 pub enum Key {
     Return,
     Tab,
@@ -20,99 +21,195 @@ pub enum Key {
     End,
     Insert,
     Delete,
-    F(u8),
-    Char(char),
 }
 
-/// Modifier key
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Modifier {
-    /// No modifier being pressed
-    None,
-    /// A.k.a the `Alt` key
-    Mod3,
-    /// A.k.a the `Control` key
-    Mod5,
+bitflags! {
+    pub struct Modifier: u8 {
+        const NONE    = 0;
+        const SHIFT   = 1 << 0;
+        const ALT     = 1 << 1;
+        const CONTROL = 1 << 2;
+    }
 }
 
-pub type KeyMod = (Key, Modifier);
+impl Default for Modifier {
+    fn default() -> Modifier {
+        Modifier::NONE
+    }
+}
+
+impl Modifier {
+    pub fn is_none(&self) -> bool {
+        self.bits == 0
+    }
+
+    pub fn escape_arg(&self) -> u8 {
+        if self.bits == 0 {
+            0x30
+        } else {
+            self.bits + 1 + 0x30     // +1 for VT encoding, +0x30 to make ascii number char
+        }
+    }
+
+    pub fn encode_into(&self, separate: bool, buffer: &mut &mut [u8]) -> io::Result<usize> {
+        let arg = self.escape_arg();
+
+        if self.is_none() {
+            return Ok(0);
+        }
+
+        if separate {
+            buffer.write(b";")?;
+            buffer.write(&[arg])?;
+            Ok(2)
+        } else {
+            buffer.write(&[arg])
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputData<'a> {
+    Key(Key, Modifier),
+    FKey(u8, Modifier),
+    Char(char, Modifier),
+    Str(&'a str),
+    Empty,
+}
 
 #[derive(Debug)]
 pub struct VTInput;
 
-macro_rules! esc {
-    ($cmd:expr) => ((concat!("\x1b[", $cmd), concat!("\x1b[1;5", $cmd), concat!("\x1b[1;3", $cmd)));
-    (~ $arg:expr) => ((concat!("\x1b[", $arg, "~"), concat!("\x1b[", $arg, ";5~"), concat!("\x1b[", $arg, ";3~")));
-    (ss3 $cmd:expr) => ((concat!("\x1bO", $cmd), concat!("\x1bO5", $cmd), concat!("\x1bO3", $cmd)));
-}
-
 impl VTInput {
-    pub fn input(&self, screen: &Screen, keymod: KeyMod, mut buffer: &mut [u8]) -> Result<usize, ()> {
+    fn encode_escape(byte: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+        if modifier.contains(Modifier::ALT) {
+            buffer.write(b"\x1b")?;
+            buffer.write(&[byte])?;
+            Ok(2)
+        } else {
+            buffer.write(&[byte])
+        }
+    }
+
+    fn encode_csi(cmd: u8, arg: Option<&[u8]>, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+        let mut size = buffer.write(b"\x1b[")?;
+
+        match arg {
+            Some(arg) => {
+                size += buffer.write(arg)?;
+                size += modifier.encode_into(true, &mut buffer)?;
+            },
+            None => size += modifier.encode_into(false, &mut buffer)?,
+        }
+
+        size += buffer.write(&[cmd])?;
+        Ok(size)
+    }
+
+    fn input_key(screen: &Screen, key: Key, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
         use Key::*;
 
-        let (key, modifier) = keymod;
-
         let mode_newline = screen.mode().contains(VTMode::NEWLINE);
-        let triple = match key {
-            Return if mode_newline => ("\r\n", "\r\n", "\x1b\r\n"),
-            Return    => ("\r", "\r", "\x1b\r"),
-            Tab       => ("\t", "\t", "\t"),
-            Backspace => ("\x7f", "\x7f", "\x7f"),
-            Up        => esc!('A'),
-            Down      => esc!('B'),
-            Right     => esc!('C'),
-            Left      => esc!('D'),
-            PageUp    => esc!(~ '5'),
-            PageDown  => esc!(~ '5'),
-            Home      => esc!('H'),
-            End       => esc!('F'),
-            Insert    => esc!(~ '2'),
-            Delete    => esc!(~ '3'),
-            F(1)      => esc!(ss3 'P'),
-            F(2)      => esc!(ss3 'Q'),
-            F(3)      => esc!(ss3 'R'),
-            F(4)      => esc!(ss3 'S'),
-            F(5)      => esc!(~ "15"),
-            F(6)      => esc!(~ "17"),    // WARN: Irregularity on purpose
-            F(7)      => esc!(~ "18"),
-            F(8)      => esc!(~ "19"),
-            F(9)      => esc!(~ "20"),
-            F(10)     => esc!(~ "21"),
-            F(11)     => esc!(~ "23"),
-            F(12)     => esc!(~ "24"),    // WARN: Ditto
-            F(_)      => return Ok(0),
-            Char(c) => {
-                let mut utf8_buffer = [0u8; 8];
+        match key {
+            Return if mode_newline => buffer.write(b"\r\n"),
+            Return    => Self::encode_escape(b'\r', modifier, buffer),
+            Tab       => Self::encode_escape(b'\t', modifier, buffer),
+            Backspace => Self::encode_escape(0x7f, modifier, buffer),
+            Up        => Self::encode_csi(b'A', None, modifier, buffer),
+            Down      => Self::encode_csi(b'B', None, modifier, buffer),
+            Right     => Self::encode_csi(b'C', None, modifier, buffer),
+            Left      => Self::encode_csi(b'D', None, modifier, buffer),
+            PageUp    => Self::encode_csi(b'~', Some(b"5"), modifier, buffer),
+            PageDown  => Self::encode_csi(b'~', Some(b"6"), modifier, buffer),
+            Home      => Self::encode_csi(b'H', None, modifier, buffer),
+            End       => Self::encode_csi(b'F', None, modifier, buffer),
+            Insert    => Self::encode_csi(b'~', Some(b"2"), modifier, buffer),
+            Delete    => Self::encode_csi(b'~', Some(b"3"), modifier, buffer),
+        }
+    }
 
-                let len = match modifier {
-                    Modifier::Mod3 => {
-                        // Write out an escaped character
-                        buffer[0] = 0x1b;
-                        c.encode_utf8(&mut utf8_buffer[1..]);
-                        c.len_utf8() + 1
-                    },
-                    Modifier::Mod5 if c.is_ascii_alphabetic() => {
-                        // Write out a control character
-                        let c_num = c.to_ascii_uppercase() as u8;
-                        utf8_buffer[0] = c_num - 0x40;
-                        1
-                    },
-                    Modifier::Mod5 | Modifier::None => {
-                        // Regular character, just write out its utf-8 representation
-                        c.encode_utf8(utf8_buffer.as_mut());
-                        c.len_utf8()
-                    },
-                };
+    fn input_fkey(fkey: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+        match fkey {
+            1  => buffer.write(b"\x1bOP"),
+            2  => buffer.write(b"\x1bOQ"),
+            3  => buffer.write(b"\x1bOR"),
+            4  => buffer.write(b"\x1bOS"),
+            5  => Self::encode_csi(b'~', Some(b"15"), modifier, buffer),
+            6  => Self::encode_csi(b'~', Some(b"17"), modifier, buffer),
+            7  => Self::encode_csi(b'~', Some(b"18"), modifier, buffer),
+            8  => Self::encode_csi(b'~', Some(b"19"), modifier, buffer),
+            9  => Self::encode_csi(b'~', Some(b"20"), modifier, buffer),
+            10 => Self::encode_csi(b'~', Some(b"21"), modifier, buffer),
+            11 => Self::encode_csi(b'~', Some(b"23"), modifier, buffer),
+            12 => Self::encode_csi(b'~', Some(b"24"), modifier, buffer),
+            13 => Self::encode_csi(b'~', Some(b"25"), modifier, buffer),
+            14 => Self::encode_csi(b'~', Some(b"26"), modifier, buffer),
+            15 => Self::encode_csi(b'~', Some(b"28"), modifier, buffer),
+            16 => Self::encode_csi(b'~', Some(b"29"), modifier, buffer),
+            17 => Self::encode_csi(b'~', Some(b"31"), modifier, buffer),
+            18 => Self::encode_csi(b'~', Some(b"32"), modifier, buffer),
+            19 => Self::encode_csi(b'~', Some(b"33"), modifier, buffer),
+            20 => Self::encode_csi(b'~', Some(b"34"), modifier, buffer),
+            _  => Ok(0),
+        }
+    }
 
-                return buffer.write(&utf8_buffer[0..len]).map_err(|_| ());
-            },
+    fn input_ascii(ch: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+        let alt = modifier.contains(Modifier::ALT);
+        let control = modifier.contains(Modifier::CONTROL);
+        let mut size = 0;
+
+        if alt {
+            size += buffer.write(b"\x1b")?;
+        }
+
+        size += match ch {
+            0x40 ... 0x5f if control => buffer.write(&[ch - 0x40])?,
+            0x60 ... 0x7f if control => buffer.write(&[ch - 0x60])?,
+            _ => buffer.write(&[ch])?,
         };
 
-        buffer.write(match modifier {
-            Modifier::None => triple.0.as_bytes(),
-            Modifier::Mod3 => triple.1.as_bytes(),
-            Modifier::Mod5 => triple.2.as_bytes(),
-        }).map_err(|_| ())
+        Ok(size)
+    }
+
+    fn input_char(ch: char, modifier: Modifier, mut buffer: &mut [u8]) -> Result<usize, ()> {
+        let ch = if ch <= '\x7f' {
+            ch as u8
+        } else {
+            return if ch.len_utf8() <= buffer.len() {
+                Ok(ch.encode_utf8(buffer).len())
+            } else {
+                Err(())
+            };
+        };
+
+        let alt = modifier.contains(Modifier::ALT);
+        let control = modifier.contains(Modifier::CONTROL);
+        let mut size = 0;
+
+        if alt {
+            size += buffer.write(b"\x1b").map_err(|_| ())?;
+        }
+
+        size += match ch {
+            0x40 ... 0x5f if control => buffer.write(&[ch - 0x40]),
+            0x60 ... 0x7f if control => buffer.write(&[ch - 0x60]),
+            _ => buffer.write(&[ch]),
+        }.map_err(|_| ())?;
+
+        Ok(size)
+    }
+
+    pub fn input(&self, screen: &Screen, input: InputData, mut buffer: &mut [u8]) -> Result<usize, ()> {
+        use InputData::*;
+
+        match input {
+            Key(key, modifier) => Self::input_key(screen, key, modifier, buffer).map_err(|_| ()),
+            FKey(num, modifier) => Self::input_fkey(num, modifier, buffer).map_err(|_| ()),
+            Char(ch, modifier) => Self::input_char(ch, modifier, buffer),
+            Str(s) => buffer.write(s.as_bytes()).map_err(|_| ()),
+            Empty => Ok(0),
+        }
     }
 
     pub fn report_answer(&self, screen: &Screen, report: VTReport, mut buffer: &mut [u8]) -> Result<usize, ()> {
