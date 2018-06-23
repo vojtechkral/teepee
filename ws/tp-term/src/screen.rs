@@ -7,11 +7,21 @@ use ::smallstring::*;
 use ::vt::*;
 
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Style {
-    col_fg: VTColor,
-    col_bg: VTColor,
-    rendition: VTRendition,
+    pub col_fg: VTColor,
+    pub col_bg: VTColor,
+    pub rendition: VTRendition,
+}
+
+impl Default for Style {
+    fn default() -> Style {
+        Style {
+            col_fg: VTColor::DefaultFg,
+            col_bg: VTColor::DefaultBg,
+            rendition: VTRendition::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -20,7 +30,7 @@ pub struct Style {
 /// May actually consist of more than one unicode characters if combining marks are present.
 pub struct Cell {
     chars: SmallString<[u8 ; 4]>,
-    style: Style,
+    pub style: Style,
 }
 
 impl Cell {
@@ -249,6 +259,8 @@ impl Screen {
     fn current_line(&mut self) -> &mut Line {
         self.lines.get_mut(self.cursor.y as usize).expect("Cursor position out of bounds")
     }
+
+    pub fn mode(&self) -> VTMode { self.mode }   // XXX: needed? Should not be needed.
 
     /// Scroll lines in the range (top, bottom), inserting blank lines and popping to scrollback if appropriate
     fn scroll_generic(&mut self, range: (u32, u32), num: i32) {
@@ -569,9 +581,6 @@ impl VTScreen for Screen {
         self.cursor.x = 0;
         self.cursor.y = 0;
     }
-
-
-    fn mode(&self) -> VTMode { self.mode }
 
     fn set_mode(&mut self, mode: VTMode, enable: bool) {
         self.mode.set(mode, enable);

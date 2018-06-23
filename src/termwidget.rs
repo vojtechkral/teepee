@@ -132,21 +132,22 @@ impl TermWidget {
         }
     }
 
-    fn render_cell(&self, cr: &Cairo, cell: &mut Cell, x: usize, y: usize) {
+    fn render_cell(&self, cr: &Cairo, cell: &mut Cell, x: usize, y: usize, colors: &tp::ColorScheme) {
         let (cellw, cellh) = (self.font.cellw, self.font.cellh);
         let (x, y) = (x as f64 * cellw, y as f64 * cellh);
         let y_text = y + cellh - self.font.descent;
         let bold = cell.rendition().contains(VTRendition::BOLD);
 
         // Draw cell background
-        let (br, bg, bb) = (0.0, 0.0, 0.0);   // XXX
-        cr.set_source_rgb(br, bg, bb);
+        let bg = colors.get_color(cell.style.col_bg);
+        cr.set_source_rgba(bg.0 as f64, bg.1 as f64, bg.2 as f64, bg.3 as f64);
+        // cr.set_source_rgb(bg.0 as f64, bg.1 as f64, bg.2 as f64);
         cr.rectangle(x, y, cellw, cellh);
         cr.fill();
 
         // Draw cell text
-        let (fr, fg, fb) = (240.0, 240.0, 240.0);   // XXX
-        cr.set_source_rgb(fr, fg, fb);
+        let fg = colors.get_color(cell.style.col_fg);
+        cr.set_source_rgba(fg.0 as f64, fg.1 as f64, fg.2 as f64, fg.3 as f64);
         cr.move_to(x, y_text);
         cr.set_font_face(if bold { self.font.boldface.clone() } else {self.font.face.clone()});
         cr.set_font_size(self.font.size);
@@ -154,9 +155,15 @@ impl TermWidget {
     }
 
     pub fn render(&self, cr: &Cairo, session: &mut tp::Session) {
+        let alloc = self.draw_area.get_allocation();
+        cr.set_source_rgb(0.0, 0.0, 0.0);
+        cr.rectangle(0.0, 0.0, alloc.width as f64, alloc.height as f64);
+        cr.fill();
+
+        let colors = &session.colors;
         for (y, line) in session.term.screen_mut().line_iter().enumerate() {
             for (x, cell) in line.iter_mut().enumerate() {
-                self.render_cell(cr, cell, x, y);
+                self.render_cell(cr, cell, x, y, colors);
             }
         }
     }

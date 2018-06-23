@@ -128,6 +128,7 @@ impl ops::Deref for ShellCell {
     type Target = Shell;
 
     fn deref(&self) -> &Shell {
+        assert_eq!(self.thread_id, thread::current().id(), "Attempt to share ShellCell between threads");
         &*self.shell
     }
 }

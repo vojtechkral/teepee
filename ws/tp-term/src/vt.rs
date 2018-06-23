@@ -33,7 +33,8 @@ impl Default for VTRendition {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VTColor {
-    Default,
+    DefaultFg,
+    DefaultBg,
     Indexed(u8),
     Rgb(u8, u8, u8),
 }
@@ -43,7 +44,8 @@ impl VTColor {
         use VTColor::*;
 
         match p {
-            39 | 49 => return Ok(Default),
+            39 => return Ok(DefaultFg),
+            49 => return Ok(DefaultBg),
 
             // Basic colors
             30 ... 37 => return Ok(Indexed(p as u8 - 30)),
@@ -82,11 +84,11 @@ impl VTColor {
     }
 }
 
-impl Default for VTColor {
-    fn default() -> VTColor {
-        VTColor::Default
-    }
-}
+// impl Default for VTColor {
+//     fn default() -> VTColor {
+//         VTColor::Default
+//     }
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VTCharset {
@@ -119,7 +121,9 @@ bitflags! {
         const ORIGIN       = 1 << 1;
         const NEWLINE      = 1 << 2;
         const INSERT       = 1 << 3;
-        const REVERSEVIDEO = 1 << 4;
+        const REVERSE_VIDEO = 1 << 4;
+        /// Application cursor keys, aka DECCKM
+        const APP_CURSOR_KEYS = 1 << 5;
     }
 }
 
@@ -278,7 +282,6 @@ pub trait VTScreen {
     /// Note that `1` means "the first line" (ie. 1-indexing).
     fn set_scroll_region(&mut self, top: u32, bottom: u32);
 
-    fn mode(&self) -> VTMode;
     fn set_mode(&mut self, mode: VTMode, enable: bool);
     fn set_rendition(&mut self, rend: VTRendition, enable: bool);
     fn set_fg(&mut self, color: VTColor);
@@ -326,7 +329,7 @@ pub trait VTDispatch {
     /// Set current screen
     fn switch_screen(&mut self, screen: VTScreenChoice);
 
-    /// Set mode on both screens
+    /// Set mode (mode is mirrored to both screens)
     fn set_mode(&mut self, mode: VTMode, enable: bool);
 
     /// Enqueue a terminal report request
@@ -482,7 +485,8 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
     fn csi_modes_dec(&mut self, enable: bool) {
         for m in self.p.params.iter() {
             match *m {
-                5 => self.d.set_mode(VTMode::REVERSEVIDEO, enable),
+                1 => self.d.set_mode(VTMode::APP_CURSOR_KEYS, enable),
+                5 => self.d.set_mode(VTMode::REVERSE_VIDEO, enable),
                 6 => {
                     self.d.set_mode(VTMode::ORIGIN, enable);
                     self.d.screen_primary().cursor_set(Some(1), Some(1));
@@ -509,8 +513,14 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
 
     /// Character rendition setting. The one escape sequence people actually know to exist.
     fn csi_sgr(&mut self) {
+        let set_default = |screen: &mut D::Screen| {
+            screen.set_rendition(VTRendition::ALL, false);
+            screen.set_fg(VTColor::DefaultFg);
+            screen.set_bg(VTColor::DefaultBg);
+        };
+
         if self.p.params.len() == 0 {
-            self.screen().set_rendition(VTRendition::ALL, false);
+            set_default(self.screen());
             return;
         }
 
@@ -518,7 +528,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
         let mut it = self.p.params.iter().map(|p| *p);
         while let Some(p) = it.next() {
             match p {
-                0 => screen.set_rendition(VTRendition::ALL, false),
+                0 => set_default(screen),
                 1 => screen.set_rendition(VTRendition::BOLD, true),
                 4 => screen.set_rendition(VTRendition::UNDERLINED, true),
                 5 => screen.set_rendition(VTRendition::BLINKING, true),

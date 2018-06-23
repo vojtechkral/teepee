@@ -81,7 +81,7 @@ pub enum InputData<'a> {
 pub struct VTInput;
 
 impl VTInput {
-    fn encode_escape(byte: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+    fn input_esc(byte: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
         if modifier.contains(Modifier::ALT) {
             buffer.write(b"\x1b")?;
             buffer.write(&[byte])?;
@@ -91,7 +91,14 @@ impl VTInput {
         }
     }
 
-    fn encode_csi(cmd: u8, arg: Option<&[u8]>, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+    fn input_ss3(cmd: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+        let mut size = buffer.write(b"\x1bO")?;
+        size += modifier.encode_into(false, &mut buffer)?;
+        size += buffer.write(&[cmd])?;
+        Ok(size)
+    }
+
+    fn input_csi(cmd: u8, arg: Option<&[u8]>, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
         let mut size = buffer.write(b"\x1b[")?;
 
         match arg {
@@ -106,50 +113,58 @@ impl VTInput {
         Ok(size)
     }
 
-    fn input_key(screen: &Screen, key: Key, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+    fn input_key(key: Key, modifier: Modifier, mode: VTMode, mut buffer: &mut [u8]) -> io::Result<usize> {
         use Key::*;
 
-        let mode_newline = screen.mode().contains(VTMode::NEWLINE);
+        let mode_nl = mode.contains(VTMode::NEWLINE);
+        let mode_appkeys = mode.contains(VTMode::APP_CURSOR_KEYS);
+
         match key {
-            Return if mode_newline => buffer.write(b"\r\n"),
-            Return    => Self::encode_escape(b'\r', modifier, buffer),
-            Tab       => Self::encode_escape(b'\t', modifier, buffer),
-            Backspace => Self::encode_escape(0x7f, modifier, buffer),
-            Up        => Self::encode_csi(b'A', None, modifier, buffer),
-            Down      => Self::encode_csi(b'B', None, modifier, buffer),
-            Right     => Self::encode_csi(b'C', None, modifier, buffer),
-            Left      => Self::encode_csi(b'D', None, modifier, buffer),
-            PageUp    => Self::encode_csi(b'~', Some(b"5"), modifier, buffer),
-            PageDown  => Self::encode_csi(b'~', Some(b"6"), modifier, buffer),
-            Home      => Self::encode_csi(b'H', None, modifier, buffer),
-            End       => Self::encode_csi(b'F', None, modifier, buffer),
-            Insert    => Self::encode_csi(b'~', Some(b"2"), modifier, buffer),
-            Delete    => Self::encode_csi(b'~', Some(b"3"), modifier, buffer),
+            Return if mode_nl && modifier.is_none() => buffer.write(b"\r\n"),
+
+            Up     if mode_appkeys => Self::input_ss3(b'A', modifier, buffer),
+            Down   if mode_appkeys => Self::input_ss3(b'B', modifier, buffer),
+            Right  if mode_appkeys => Self::input_ss3(b'C', modifier, buffer),
+            Left   if mode_appkeys => Self::input_ss3(b'D', modifier, buffer),
+
+            Return    => Self::input_esc(b'\r', modifier, buffer),
+            Tab       => Self::input_esc(b'\t', modifier, buffer),
+            Backspace => Self::input_esc(0x7f, modifier, buffer),
+            Up        => Self::input_csi(b'A', None, modifier, buffer),
+            Down      => Self::input_csi(b'B', None, modifier, buffer),
+            Right     => Self::input_csi(b'C', None, modifier, buffer),
+            Left      => Self::input_csi(b'D', None, modifier, buffer),
+            PageUp    => Self::input_csi(b'~', Some(b"5"), modifier, buffer),
+            PageDown  => Self::input_csi(b'~', Some(b"6"), modifier, buffer),
+            Home      => Self::input_csi(b'H', None, modifier, buffer),
+            End       => Self::input_csi(b'F', None, modifier, buffer),
+            Insert    => Self::input_csi(b'~', Some(b"2"), modifier, buffer),
+            Delete    => Self::input_csi(b'~', Some(b"3"), modifier, buffer),
         }
     }
 
     fn input_fkey(fkey: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
         match fkey {
-            1  => buffer.write(b"\x1bOP"),
-            2  => buffer.write(b"\x1bOQ"),
-            3  => buffer.write(b"\x1bOR"),
-            4  => buffer.write(b"\x1bOS"),
-            5  => Self::encode_csi(b'~', Some(b"15"), modifier, buffer),
-            6  => Self::encode_csi(b'~', Some(b"17"), modifier, buffer),
-            7  => Self::encode_csi(b'~', Some(b"18"), modifier, buffer),
-            8  => Self::encode_csi(b'~', Some(b"19"), modifier, buffer),
-            9  => Self::encode_csi(b'~', Some(b"20"), modifier, buffer),
-            10 => Self::encode_csi(b'~', Some(b"21"), modifier, buffer),
-            11 => Self::encode_csi(b'~', Some(b"23"), modifier, buffer),
-            12 => Self::encode_csi(b'~', Some(b"24"), modifier, buffer),
-            13 => Self::encode_csi(b'~', Some(b"25"), modifier, buffer),
-            14 => Self::encode_csi(b'~', Some(b"26"), modifier, buffer),
-            15 => Self::encode_csi(b'~', Some(b"28"), modifier, buffer),
-            16 => Self::encode_csi(b'~', Some(b"29"), modifier, buffer),
-            17 => Self::encode_csi(b'~', Some(b"31"), modifier, buffer),
-            18 => Self::encode_csi(b'~', Some(b"32"), modifier, buffer),
-            19 => Self::encode_csi(b'~', Some(b"33"), modifier, buffer),
-            20 => Self::encode_csi(b'~', Some(b"34"), modifier, buffer),
+            1  => Self::input_ss3(b'P', modifier, buffer),
+            2  => Self::input_ss3(b'Q', modifier, buffer),
+            3  => Self::input_ss3(b'R', modifier, buffer),
+            4  => Self::input_ss3(b'S', modifier, buffer),
+            5  => Self::input_csi(b'~', Some(b"15"), modifier, buffer),
+            6  => Self::input_csi(b'~', Some(b"17"), modifier, buffer),
+            7  => Self::input_csi(b'~', Some(b"18"), modifier, buffer),
+            8  => Self::input_csi(b'~', Some(b"19"), modifier, buffer),
+            9  => Self::input_csi(b'~', Some(b"20"), modifier, buffer),
+            10 => Self::input_csi(b'~', Some(b"21"), modifier, buffer),
+            11 => Self::input_csi(b'~', Some(b"23"), modifier, buffer),
+            12 => Self::input_csi(b'~', Some(b"24"), modifier, buffer),
+            13 => Self::input_csi(b'~', Some(b"25"), modifier, buffer),
+            14 => Self::input_csi(b'~', Some(b"26"), modifier, buffer),
+            15 => Self::input_csi(b'~', Some(b"28"), modifier, buffer),
+            16 => Self::input_csi(b'~', Some(b"29"), modifier, buffer),
+            17 => Self::input_csi(b'~', Some(b"31"), modifier, buffer),
+            18 => Self::input_csi(b'~', Some(b"32"), modifier, buffer),
+            19 => Self::input_csi(b'~', Some(b"33"), modifier, buffer),
+            20 => Self::input_csi(b'~', Some(b"34"), modifier, buffer),
             _  => Ok(0),
         }
     }
@@ -200,11 +215,11 @@ impl VTInput {
         Ok(size)
     }
 
-    pub fn input(&self, screen: &Screen, input: InputData, mut buffer: &mut [u8]) -> Result<usize, ()> {
+    pub fn input(&self, input: InputData, mode: VTMode, mut buffer: &mut [u8]) -> Result<usize, ()> {
         use InputData::*;
 
         match input {
-            Key(key, modifier) => Self::input_key(screen, key, modifier, buffer).map_err(|_| ()),
+            Key(key, modifier) => Self::input_key(key, modifier, mode, buffer).map_err(|_| ()),
             FKey(num, modifier) => Self::input_fkey(num, modifier, buffer).map_err(|_| ()),
             Char(ch, modifier) => Self::input_char(ch, modifier, buffer),
             Str(s) => buffer.write(s.as_bytes()).map_err(|_| ()),

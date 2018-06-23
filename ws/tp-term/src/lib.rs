@@ -28,6 +28,7 @@ pub struct TermUpdate {
 
 #[derive(Debug)]
 pub struct TermState {
+    mode: VTMode,
     screen_current: VTScreenChoice,
     screen_primary: Screen,
     screen_alternate: Screen,
@@ -39,6 +40,7 @@ pub struct TermState {
 impl TermState {
     pub fn new() -> TermState {
         TermState {
+            mode: VTMode::default(),
             screen_current: VTScreenChoice::default(),
             screen_primary: Screen::default(),
             screen_alternate: Screen::default(),
@@ -77,6 +79,7 @@ impl VTDispatch for TermState {
     fn screen_alternate(&mut self) -> &mut Self::Screen { &mut self.screen_alternate }
 
     fn switch_screen(&mut self, screen: VTScreenChoice) {
+        // TODO: default style should be set on alt screen (?)
         if (screen != self.screen_current) {
             self.update.screen_switched = true;
         }
@@ -84,6 +87,8 @@ impl VTDispatch for TermState {
     }
 
     fn set_mode(&mut self, mode: VTMode, enable: bool) {
+        self.mode.set(mode, enable);
+        // Also copy the mode to the screens for easier access
         self.screen_primary.set_mode(mode, enable);
         self.screen_alternate.set_mode(mode, enable);
     }
@@ -121,7 +126,7 @@ impl Term {
     }
 
     pub fn input(&self, input: InputData, buffer: &mut [u8]) -> Result<usize, ()> {
-        self.input.input(self.screen(), input, buffer)
+        self.input.input(input, self.mode, buffer)
     }
 
     pub fn report_answer(&self, report: VTReport, buffer: &mut [u8]) -> Result<usize, ()> {
