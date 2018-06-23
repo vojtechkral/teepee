@@ -260,7 +260,6 @@ pub trait VTScreen {
     fn tabs_clear(&mut self);
 
     fn reset(&mut self);
-    fn resize(&mut self, cols: u32, rows: u32);   // XXX: this probably shouldn't be part of the trait
 
     /// Scroll screen or the scrolling region if any.
     /// Positive `num` is for scrolling up, negative for scrolling down.

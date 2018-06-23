@@ -78,7 +78,7 @@ impl From<ModifierType> for Modifier {
 
 struct EventKey<'a>(&'a gdk::EventKey);
 
-// TODO: Use TryFrom when it's stable
+// TODO: Use TryFrom when it's been stable enough
 impl<'a> From<EventKey<'a>> for Option<InputData<'a>> {
     fn from(evt: EventKey<'a>) -> Option<InputData<'a>> {
         use gdk::enums::key;
@@ -87,9 +87,7 @@ impl<'a> From<EventKey<'a>> for Option<InputData<'a>> {
         let keyval = evt.0.get_keyval();
         let unicode = unsafe { gdk_sys::gdk_keyval_to_unicode(keyval as _) };
         let unicode: char = unsafe { mem::transmute(unicode) };
-        println!("unicode: {} = {}", unicode, unicode as u32);
         let modifier: Modifier = ModifierType(evt.0.get_state()).into();
-        println!("modifier: {:?}", modifier);
 
         Some(match keyval {
             key::Return    | key::KP_Enter     => InputData::Key(Key::Return, modifier),
@@ -179,12 +177,9 @@ impl TermWidget {
         });
     }
 
-    // XXX: TODO
     pub fn connect_input<F>(&self, func: F)
     where F: Fn(InputData) + 'static {
         self.draw_area.connect_key_press_event(move |_, evt| {
-            println!("key press: {:?}", evt);
-
             // TODO: https://stackoverflow.com/questions/40011838/how-to-receive-characters-from-input-method-in-gtk2
             // (Or do whatever Gnome vte widget does)
 
@@ -215,8 +210,8 @@ impl TermWidget {
         self.font = Font::new(family, size);
     }
 
-    pub fn screen_size(&self) -> (u32, u32) {
+    pub fn screen_size(&self) -> (u16, u16) {
         let alloc = self.draw_area.get_allocation();
-        (alloc.width as u32 / self.font.cellw as u32, alloc.height as u32 / self.font.cellh as u32)
+        (alloc.width as u16 / self.font.cellw as u16, alloc.height as u16 / self.font.cellh as u16)
     }
 }

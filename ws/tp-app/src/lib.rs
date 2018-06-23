@@ -13,7 +13,7 @@ use std::os::unix::io::{RawFd, AsRawFd};
 pub mod term { pub use tp_term::*; }
 pub mod pty { pub use tp_pty::*; }
 
-use pty::{Process, TermSize};
+use pty::Process;
 use term::{Term, InputData};
 
 
@@ -87,36 +87,42 @@ impl Session {
         }.map_err(io::Error::into)
     }
 
-    pub fn pk(&mut self) {    // XXX
-        let mut buffer = vec![0; 4096];
-
-        self.ps.resize(TermSize::new(25, 80)).unwrap();
-
-        self.ps.write(b"\n").unwrap();
-        self.ps.flush().unwrap();
-
-        let mut i = 0;
-        // loop {
-        //     let avail = self.ps.bytes_available().unwrap();
-        //     if avail > 0 {
-        //         let actually_read = self.ps.read(&mut buffer).unwrap();
-        //         io::stdout().write(&buffer[0..actually_read]).unwrap();
-        //     } else if i == 50 {
-        //         break;
-        //     } else {
-        //         thread::sleep_ms(50);
-        //         i += 1;
-        //     }
-        // }
-        while let Ok(read) = self.notify_read() {
-            if i == 50 {
-                break;
-            } else {
-                thread::sleep_ms(50);
-                i += 1;
-            }
-        }
+    pub fn screen_resize(&mut self, cols: u16, rows: u16) -> Result<()> {
+        self.ps.set_winsize(cols, rows)?;
+        self.term.screen_resize(cols, rows);
+        Ok(())
     }
+
+    // pub fn pk(&mut self) {    // XXX
+    //     let mut buffer = vec![0; 4096];
+
+    //     self.ps.resize(TermSize::new(25, 80)).unwrap();
+
+    //     self.ps.write(b"\n").unwrap();
+    //     self.ps.flush().unwrap();
+
+    //     let mut i = 0;
+    //     // loop {
+    //     //     let avail = self.ps.bytes_available().unwrap();
+    //     //     if avail > 0 {
+    //     //         let actually_read = self.ps.read(&mut buffer).unwrap();
+    //     //         io::stdout().write(&buffer[0..actually_read]).unwrap();
+    //     //     } else if i == 50 {
+    //     //         break;
+    //     //     } else {
+    //     //         thread::sleep_ms(50);
+    //     //         i += 1;
+    //     //     }
+    //     // }
+    //     while let Ok(read) = self.notify_read() {
+    //         if i == 50 {
+    //             break;
+    //         } else {
+    //             thread::sleep_ms(50);
+    //             i += 1;
+    //         }
+    //     }
+    // }
 }
 
 impl AsRawFd for Session {

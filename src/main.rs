@@ -165,7 +165,7 @@ impl Shell {
         let shell_ = shell.clone();
         shell.term_widget.connect_resize(move || {
             let (cols, rows) = shell_.term_widget.screen_size();
-            shell_.session.borrow_mut().term.screen_resize(cols, rows);
+            shell_.session.borrow_mut().screen_resize(cols, rows).unwrap();    // XXX: error handling
         });
 
         let shell_cell = ShellCell::new(&shell);

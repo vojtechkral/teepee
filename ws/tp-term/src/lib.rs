@@ -50,10 +50,9 @@ impl TermState {
         mem::replace(&mut self.update, TermUpdate::default())
     }
 
-    pub fn screen_resize(&mut self, cols: u32, rows: u32) {
+    pub fn screen_resize(&mut self, cols: u16, rows: u16) {
         self.screen_primary.resize(cols, rows);
         self.screen_alternate.resize(cols, rows);
-        // FIXME: pty resize
     }
 }
 

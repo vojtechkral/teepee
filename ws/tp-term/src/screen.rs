@@ -284,6 +284,52 @@ impl Screen {
             }
         }
     }
+
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        let cols = (cols as u32).max(SCREEN_SIZE_MIN.0);
+        let rows = (rows as u32).max(SCREEN_SIZE_MIN.1);
+
+        // Resize each line
+        if cols > self.size.0 {
+            for line in self.lines.iter_mut() {
+                let ch = Cell::with_style(line.last().unwrap().style);
+                line.resize(cols as usize, ch);
+            }
+        } else if cols < self.size.0 {
+            self.cursor.x = self.cursor.x.min(cols - 1);
+        }
+
+        // Resize lines
+        if rows < self.size.1 {
+            let diff = self.size.1 - rows;
+
+            // FIXME: try to remove empty lines from back first
+
+            for _ in 0 .. diff {
+                let _line = self.lines.pop_front();
+                // TODO: Scrollback
+            }
+
+            self.cursor.y = self.cursor.y.saturating_sub(diff);
+
+            // Fix scrolling region if needed
+            self.scroll_rg.1 = self.scroll_rg.1.min(rows - 1);
+            self.scroll_rg.0 = self.scroll_rg.0.min(self.scroll_rg.1 - 1);
+        } else if rows > self.size.1 {
+            for _ in self.size.1 .. rows {
+                self.lines.push_back(Line::new(Cell::with_style(self.cursor.style), cols));
+            }
+        }
+
+        // Resize tabs
+        if cols > self.size.0 {
+            (self.size.0 .. cols)
+                .map(|i| i % 8 == 0)
+                .for_each(|tab| self.tabs.push(tab));
+        }
+
+        self.size = (cols, rows);
+    }
 }
 
 impl Default for Screen {
@@ -440,52 +486,6 @@ impl VTScreen for Screen {
     fn tabs_clear(&mut self) {
         self.tabs.resize(0, false);
         self.tabs.resize(self.size.0 as usize, false);
-    }
-
-    fn resize(&mut self, cols: u32, rows: u32) {
-        let cols = cols.max(SCREEN_SIZE_MIN.0);
-        let rows = rows.max(SCREEN_SIZE_MIN.1);
-
-        // Resize each line
-        if cols > self.size.0 {
-            for line in self.lines.iter_mut() {
-                let ch = Cell::with_style(line.last().unwrap().style);
-                line.resize(cols as usize, ch);
-            }
-        } else if cols < self.size.0 {
-            self.cursor.x = self.cursor.x.min(cols - 1);
-        }
-
-        // Resize lines
-        if rows < self.size.1 {
-            let diff = self.size.1 - rows;
-
-            // FIXME: try to remove empty lines from back first
-
-            for _ in 0 .. diff {
-                let _line = self.lines.pop_front();
-                // TODO: Scrollback
-            }
-
-            self.cursor.y = self.cursor.y.saturating_sub(diff);
-
-            // Fix scrolling region if needed
-            self.scroll_rg.1 = self.scroll_rg.1.min(rows - 1);
-            self.scroll_rg.0 = self.scroll_rg.0.min(self.scroll_rg.1 - 1);
-        } else if rows > self.size.1 {
-            for _ in self.size.1 .. rows {
-                self.lines.push_back(Line::new(Cell::with_style(self.cursor.style), cols));
-            }
-        }
-
-        // Resize tabs
-        if cols > self.size.0 {
-            (self.size.0 .. cols)
-                .map(|i| i % 8 == 0)
-                .for_each(|tab| self.tabs.push(tab));
-        }
-
-        self.size = (cols, rows);
     }
 
     fn scroll(&mut self, mut num: i32) {
