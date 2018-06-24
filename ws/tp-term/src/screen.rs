@@ -232,6 +232,7 @@ impl Screen {
 
     fn x(&self) -> usize { self.cursor.x as usize }
     fn y(&self) -> usize { self.cursor.y as usize }
+    pub fn cursor_position(&self) -> (u32, u32) { (self.cursor.x, self.cursor.y) }
 
     fn clamp_x(&self, x: u32) -> u32 { if x >= self.size.0 { self.size.0 - 1 } else { x } }
     fn clamp_y(&self, y: u32) -> u32 { if y >= self.size.1 { self.size.1 - 1 } else { y } }

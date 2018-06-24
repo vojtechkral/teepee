@@ -65,7 +65,7 @@ impl ops::Deref for ShellCell {
 
 impl Shell {
     pub fn new() -> Rc<Shell> {
-        let session = tp::Session::new(Command::new("bash")).unwrap();    // XXX
+        let session = tp::Session::new(Command::new("zsh")).unwrap();    // XXX
         let iochannel = IOChannel::new(&session);
         let session = RefCell::new(session);
         let term_widget = TermWidget::new();

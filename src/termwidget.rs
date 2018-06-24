@@ -15,6 +15,21 @@ use tp;
 use tp::term::{Cell, VTDispatch, VTRendition, InputData, Modifier, Key};
 
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Frgba(pub f64, pub f64, pub f64, pub f64);
+
+impl From<tp::Rgba> for Frgba {
+    fn from(rgba: tp::Rgba) -> Frgba {
+        Frgba(
+            (rgba.0 as f64) / 255.0,
+            (rgba.1 as f64) / 255.0,
+            (rgba.2 as f64) / 255.0,
+            (rgba.3 as f64) / 255.0,
+        )
+    }
+}
+
+
 struct Font {
     family: String,
     face: FontFace,
@@ -137,19 +152,19 @@ impl TermWidget {
         let (x, y) = (x as f64 * cellw, y as f64 * cellh);
         let y_text = y + cellh - self.font.descent;
         let bold = cell.rendition().contains(VTRendition::BOLD);
-        let mut bg = colors.get_color(cell.style.col_bg);
-        let mut fg = colors.get_color(cell.style.col_fg);
+        let mut bg: Frgba = colors.get_color(cell.style.col_bg).into();
+        let mut fg: Frgba = colors.get_color(cell.style.col_fg).into();
         if cell.rendition().contains(VTRendition::INVERSE) {    // TODO: also REVERSE_VIDEO
             mem::swap(&mut bg, &mut fg);
         }
 
         // Draw cell background
-        cr.set_source_rgba(bg.0 as f64, bg.1 as f64, bg.2 as f64, bg.3 as f64);
+        cr.set_source_rgba(bg.0, bg.1, bg.2, bg.3);
         cr.rectangle(x, y, cellw, cellh);
         cr.fill();
 
         // Draw cell text
-        cr.set_source_rgba(fg.0 as f64, fg.1 as f64, fg.2 as f64, fg.3 as f64);
+        cr.set_source_rgba(fg.0, fg.1, fg.2, fg.3);
         cr.move_to(x, y_text);
         cr.set_font_face(if bold { self.font.boldface.clone() } else {self.font.face.clone()});
         cr.set_font_size(self.font.size);
@@ -168,6 +183,11 @@ impl TermWidget {
                 self.render_cell(cr, cell, x, y, colors);
             }
         }
+
+        // Draw cursor: TODO
+        // let (cellw, cellh) = (self.font.cellw, self.font.cellh);
+        // let (cx, cy) = session.term.screen().cursor_position();
+        // let (cx, cy) = (cx as f64 * cellw, cy as f64 * cellh);
     }
 
     pub fn connect_draw<F>(&self, func: F)
@@ -204,7 +224,6 @@ impl TermWidget {
     pub fn grab_focus(&self) {
         self.draw_area.set_can_focus(true);   // Apparently this needs to be done when the ui is built
         self.draw_area.grab_focus();
-        println!("has focus: {}", self.draw_area.has_focus());
     }
 
     pub fn queue_draw(&self) {
