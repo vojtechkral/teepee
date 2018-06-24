@@ -276,10 +276,11 @@ pub trait VTScreen {
     fn scroll_at_cursor(&mut self, num: i32);
 
     /// Set scrolling region.
-    /// `top` should be at least `1`, `bottom` should be strictly larger than `top`,
-    /// and `top` should be within screen's height.
+    /// Default value for `top` is `1` (ie. `top` of `0` maps to `1`), default for bottom is the screen height.
+    /// Additionally, `bottom` should be strictly larger than `top`, and `top` should be less than screen's height.
     /// If those conditions are not met, apply the default action - reseting the scroll region to the whole screen.
     /// Note that `1` means "the first line" (ie. 1-indexing).
+    /// This also resets cursor to the top-left corner.
     fn set_scroll_region(&mut self, top: u32, bottom: u32);
 
     fn set_mode(&mut self, mode: VTMode, enable: bool);
@@ -500,6 +501,7 @@ impl<'s, 'd, D: VTDispatch + 'static> Dispatcher<'s, 'd, D> {
                 1049 if  enable => {
                     self.d.screen_primary().cursor_save();
                     self.d.switch_screen(VTScreenChoice::Alternate);
+                    // TODO: default style should be set on alt screen (?)
                     self.d.screen_alternate().erase(VTErase::All);
                 },
                 1049 if !enable => {

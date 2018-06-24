@@ -137,16 +137,18 @@ impl TermWidget {
         let (x, y) = (x as f64 * cellw, y as f64 * cellh);
         let y_text = y + cellh - self.font.descent;
         let bold = cell.rendition().contains(VTRendition::BOLD);
+        let mut bg = colors.get_color(cell.style.col_bg);
+        let mut fg = colors.get_color(cell.style.col_fg);
+        if cell.rendition().contains(VTRendition::INVERSE) {    // TODO: also REVERSE_VIDEO
+            mem::swap(&mut bg, &mut fg);
+        }
 
         // Draw cell background
-        let bg = colors.get_color(cell.style.col_bg);
         cr.set_source_rgba(bg.0 as f64, bg.1 as f64, bg.2 as f64, bg.3 as f64);
-        // cr.set_source_rgb(bg.0 as f64, bg.1 as f64, bg.2 as f64);
         cr.rectangle(x, y, cellw, cellh);
         cr.fill();
 
         // Draw cell text
-        let fg = colors.get_color(cell.style.col_fg);
         cr.set_source_rgba(fg.0 as f64, fg.1 as f64, fg.2 as f64, fg.3 as f64);
         cr.move_to(x, y_text);
         cr.set_font_face(if bold { self.font.boldface.clone() } else {self.font.face.clone()});

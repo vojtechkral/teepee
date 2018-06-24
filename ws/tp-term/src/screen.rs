@@ -266,16 +266,15 @@ impl Screen {
     fn scroll_generic(&mut self, range: (u32, u32), num: i32) {
         // FIXME: dirty marking
 
+        let scroll_up = num >= 0;
         let range = (range.0 as i32, range.1 as i32);
+        let num = num.abs().min(range.1 - range.0 + 1);
 
-        if num > 0 {
+        if scroll_up {
             // Scroll up
 
-            for i in range.0 .. range.0 - num + 1 {
-                self.lines.swap(i as usize, (i + num) as usize);
-            }
-
-            for i in range.0 - num + 1 .. range.0 + 1 {
+            // 1. Pop top lines, either onto scrollback if SR is at the top of the screen or discard
+            for i in range.0 .. range.0 + num {
                 let mut empty = self.empty_line();
                 mem::swap(&mut empty, self.lines.get_mut(i as usize).expect("Lines index out of bounds"));
                 if range.0 == 0 {
@@ -283,17 +282,25 @@ impl Screen {
                 }
             }
 
+            // 2. Shift lines in SR up by num
+            for i in range.0 + num .. range.1 + 1 {
+                self.lines.swap(i as usize, (i - num) as usize);
+            }
         } else {
             // Scroll down
 
-            for i in (range.0 + num .. range.0).rev() {
-                self.lines.swap(i as usize, (i - num) as usize);
-            }
-
-            for i in range.0 .. range.0 + num {
+            // 1. Erase last num lines
+            for i in range.1 - num + 1 .. range.1 + 1 {
                 let mut empty = self.empty_line();
                 *self.lines.get_mut(i as usize).expect("Lines index out of bounds") = empty;
             }
+
+            // 2. Shift lines in SR down by num
+            for i in (range.0 .. range.1 - num + 1).rev() {
+                self.lines.swap(i as usize, (i + num) as usize);
+            }
+
+
         }
     }
 
@@ -530,34 +537,8 @@ impl VTScreen for Screen {
             // FIXME: scrollup rendering metadata
         } else {
             // Scroll the scrolling region
-
             let scroll_rg = self.scroll_rg;
             self.scroll_generic(scroll_rg, num);
-
-            // let (rg_0, rg_1) = (self.scroll_rg.0 as i32, self.scroll_rg.1 as i32);
-
-            // if num > 0 {
-            //     // Scroll up
-            //     for i in rg_0 .. rg_1 - num + 1 {
-            //         self.lines.swap(i as usize, (i + num) as usize);
-            //     }
-            //     for i in rg_1 - num + 1 .. rg_1 + 1 {
-            //         let mut empty = self.empty_line();
-            //         mem::swap(&mut empty, self.lines.get_mut(i as usize).expect("Lines index out of bounds"));
-            //         if rg_0 == 0 {
-            //             // TODO: Scrollback
-            //         }
-            //     }
-            // } else {
-            //     // Scroll down
-            //     for i in (rg_0 + num .. rg_1).rev() {
-            //         self.lines.swap(i as usize, (i - num) as usize);
-            //     }
-            //     for i in rg_0 .. rg_0 + num {
-            //         let mut empty = self.empty_line();
-            //         *self.lines.get_mut(i as usize).expect("Lines index out of bounds") = empty;
-            //     }
-            // }
         }
     }
 
@@ -573,10 +554,18 @@ impl VTScreen for Screen {
     }
 
     fn set_scroll_region(&mut self, mut top: u32, mut bottom: u32) {
-        if bottom == 0 { bottom = self.size.1 - 1; }
-        bottom = bottom.min(self.size.1 - 1);
-        top = top.min(bottom - 1);
+        // 1. Apply defaults and convert to 0-indexing
+        if top > 0 { top -= 1; }
+        if bottom == 0 { bottom = self.size.1 - 1 }
+        else { bottom -= 1; }
 
+        // 2. Sanitize - if arguments are illegal, reset to the whole screen
+        if bottom <= top || top >= self.size.1 - 1 || bottom >= self.size.1 {
+            top = 0;
+            bottom = self.size.1 - 1;
+        }
+
+        // 3. Apply and reset cursor
         self.scroll_rg = (top, bottom);
         self.cursor.x = 0;
         self.cursor.y = 0;

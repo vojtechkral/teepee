@@ -79,7 +79,6 @@ impl VTDispatch for TermState {
     fn screen_alternate(&mut self) -> &mut Self::Screen { &mut self.screen_alternate }
 
     fn switch_screen(&mut self, screen: VTScreenChoice) {
-        // TODO: default style should be set on alt screen (?)
         if (screen != self.screen_current) {
             self.update.screen_switched = true;
         }
