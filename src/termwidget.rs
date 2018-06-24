@@ -86,7 +86,7 @@ struct ModifierType(gdk::ModifierType);
 impl From<ModifierType> for Modifier {
     fn from(modifier: ModifierType) -> Modifier {
         let bits = modifier.0.bits();
-        let bits = bits & 1 | bits & 4 | bits & 8 << 2;
+        let bits = bits & 1 | bits & 4 | (bits & 8) >> 2;
         Modifier::from_bits_truncate(bits as u8)
     }
 }
