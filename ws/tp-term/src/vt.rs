@@ -12,9 +12,9 @@ bitflags! {
     pub struct VTRendition: u8 {
         const BOLD       = 1 << 0;
         const UNDERLINED = 1 << 1;
+        const INVERSE    = 1 << 2;
         /// Blinking is sometimes implemented as synonimous to bold.
-        const BLINKING   = 1 << 2;
-        const INVERSE    = 1 << 3;
+        const BLINKING   = 1 << 3;
         const INVISIBLE  = 1 << 4;
         const ALL = 0x1f;
 
@@ -291,9 +291,8 @@ pub trait VTScreen {
     fn charset_use(&mut self, slot: u32);
     fn charset_designate(&mut self, slot: u32, charset: VTCharset);
 
-    /// Get curront cursor coordinates, horizontal and vertical respectively.
-    /// Note: the returnes coordinates must be 1-indexed.
-    fn cursor_pos(&self) -> (u32, u32);
+    /// Get current cursor coordinates, horizontal and vertical respectively, 1-indexed
+    fn cursor(&self) -> (u32, u32);
     /// Set cursor absolute position
     /// Note that the coordinates are 1-indexed.
     fn cursor_set(&mut self, x: Option<u32>, y: Option<u32>);
@@ -867,7 +866,6 @@ mod tests {
         dispatch_impl!(tab_set, tab: bool);
         dispatch_impl!(tabs_clear);
         dispatch_impl!(reset);
-        dispatch_impl!(resize, cols: u32, rows: u32);
         dispatch_impl!(scroll, num: i32);
         dispatch_impl!(scroll_at_cursor, num: i32);
         dispatch_impl!(set_scroll_region, top: u32, bottom: u32);
@@ -877,6 +875,7 @@ mod tests {
         dispatch_impl!(set_bg, color: VTColor);
         dispatch_impl!(charset_use, slot: u32);
         dispatch_impl!(charset_designate, slot: u32, charset: VTCharset);
+        fn cursor(&self) -> (u32, u32) { (1, 1) }
         dispatch_impl!(cursor_set, x: Option<u32>, y: Option<u32>);
         dispatch_impl!(cursor_move, x: i32, y: i32);
         dispatch_impl!(cursor_save);
@@ -887,13 +886,15 @@ mod tests {
     impl VTDispatch for TestDispatch {
         type Screen = TestDispatch;
 
-        fn screen(&mut self) -> &mut Self::Screen { self }
+        fn screen(&self) -> &Self::Screen { self }
+        fn screen_mut(&mut self) -> &mut Self::Screen { self }
         fn screen_primary(&mut self) -> &mut Self::Screen { self }
         fn screen_alternate(&mut self) -> &mut Self::Screen { self }
 
         dispatch_impl!(switch_screen, screen: VTScreenChoice);
         dispatch_impl!(set_mode, mode: VTMode, enable: bool);
         dispatch_impl!(report_request, report: VTReport);
+        dispatch_impl!(bell);
     }
 
     macro_rules! parse {

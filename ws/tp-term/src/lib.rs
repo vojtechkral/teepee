@@ -9,12 +9,14 @@ use smallvec::SmallVec;
 
 pub mod utf8;
 mod smallstring;
-mod screen;
 mod vt;
+mod scrollback;
+mod screen;
 mod input;
 pub use smallstring::*;
-pub use screen::*;
 pub use vt::*;
+pub use scrollback::*;
+pub use screen::*;
 pub use input::*;
 
 

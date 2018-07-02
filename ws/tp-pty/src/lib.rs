@@ -221,13 +221,13 @@ fn process_io() {
     ps.write(b"\n").unwrap();
     ps.flush().unwrap();
     ps.bytes_available().unwrap();
-    ps.resize(TermSize::new(25, 80)).unwrap();
+    ps.set_winsize(25, 80).unwrap();
     ps.read(&mut byte).unwrap();    // Surely there's at least 1 byte to read ...
 }
 
 fn termsize() {
     let mut ps = make_test_process();
-    ps.resize(TermSize::new(25, 80)).unwrap();
+    ps.set_winsize(25, 80).unwrap();
 }
 
 }

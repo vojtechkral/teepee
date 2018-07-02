@@ -7,7 +7,7 @@ use ::smallstring::*;
 use ::vt::*;
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Style {
     pub col_fg: VTColor,
     pub col_bg: VTColor,
@@ -24,7 +24,7 @@ impl Default for Style {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Character as part of the screen's grid, has associated `Style`
 ///
 /// May actually consist of more than one unicode characters if combining marks are present.
@@ -232,7 +232,6 @@ impl Screen {
 
     fn x(&self) -> usize { self.cursor.x as usize }
     fn y(&self) -> usize { self.cursor.y as usize }
-    pub fn cursor_position(&self) -> (u32, u32) { (self.cursor.x, self.cursor.y) }
 
     fn clamp_x(&self, x: u32) -> u32 { if x >= self.size.0 { self.size.0 - 1 } else { x } }
     fn clamp_y(&self, y: u32) -> u32 { if y >= self.size.1 { self.size.1 - 1 } else { y } }
@@ -588,7 +587,7 @@ impl VTScreen for Screen {
 
     fn reset(&mut self) { unimplemented!() }
 
-    fn cursor_pos(&self) -> (u32, u32) { (self.cursor.x + 1, self.cursor.y + 1) }
+    fn cursor(&self) -> (u32, u32) { (self.cursor.x + 1, self.cursor.y + 1) }
 
     fn cursor_set(&mut self, x: Option<u32>, y: Option<u32>) {
         if let Some(y) = y {

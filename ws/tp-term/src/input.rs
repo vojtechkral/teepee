@@ -230,14 +230,14 @@ impl VTInput {
     pub fn report_answer(&self, screen: &Screen, report: VTReport, mut buffer: &mut [u8]) -> Result<usize, ()> {
         use VTReport::*;
 
-        let cursor_pos = screen.cursor_pos();
-        let cursor_pos = format!("\x1b[{};{}R", cursor_pos.0, cursor_pos.1);
+        let cursor = screen.cursor();
+        let cursor = format!("\x1b[{};{}R", cursor.0, cursor.1);
         buffer.write(match report {
             AnswerBack => b"TeePee",
             PrimaryAttrs => b"\x1b[?1;2c",
             SecondaryAttrs => b"\x1b>0;0;0c",    // TODO: version number?
             DeviceStatus => b"\x1b[0n",
-            CursorPos => cursor_pos.as_bytes(),
+            CursorPos => cursor.as_bytes(),
             TermParams0 => b"\x1b[2;1;1;120;120;1;0;x",     // Made-up numbers
             TermParams1 => b"\x1b[3;1;1;120;120;1;0;x",     // Made-up numbers
         }).map_err(|_| ())

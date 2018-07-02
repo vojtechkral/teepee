@@ -155,10 +155,6 @@ fn build_ui(application: &gtk::Application) {
 }
 
 fn main() {
-    // let mut session = tp_lib::Session::new(Command::new("bash")).unwrap();
-    // println!("session: {:?}", session);
-    // session.pk();
-
     let application = gtk::Application::new("hk.kral.teepee", gio::ApplicationFlags::empty()).unwrap();
     application.connect_startup(|app| build_ui(app));
     application.connect_activate(|_| {});
