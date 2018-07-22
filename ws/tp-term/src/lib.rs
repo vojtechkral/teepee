@@ -5,7 +5,7 @@ extern crate unicode_width;
 use std::mem;
 use std::ops;
 
-use smallvec::SmallVec;
+use smallvec::{SmallVec, Drain};
 
 pub mod utf8;
 mod smallstring;
@@ -20,13 +20,7 @@ pub use screen::*;
 pub use input::*;
 
 
-#[derive(Debug, Clone, Default)]
-pub struct TermUpdate {
-    // scrolled_up: usize,  // FIXME: move to screen
-    screen_switched: bool,
-    bell: bool,
-    report_requests: SmallVec<[VTReport; 4]>,
-}
+pub type ReportRequests = SmallVec<[VTReport; 4]>;
 
 #[derive(Debug)]
 pub struct TermState {
@@ -35,8 +29,10 @@ pub struct TermState {
     screen_primary: Screen,
     screen_alternate: Screen,
     // screen_choice_prev: VTScreenChoice,   // TODO: remove in favor of *Update
-    update: TermUpdate,
+    // update: TermUpdate,
     // TODO: scrollback
+    bell: bool,
+    report_requests: ReportRequests,
 }
 
 impl TermState {
@@ -46,17 +42,23 @@ impl TermState {
             screen_current: VTScreenChoice::default(),
             screen_primary: Screen::default(),
             screen_alternate: Screen::default(),
-            update: TermUpdate::default(),
+            // update: TermUpdate::default(),
+            bell: false,
+            report_requests: ReportRequests::new(),
         }
-    }
-
-    pub fn reset_update(&mut self) -> TermUpdate {
-        mem::replace(&mut self.update, TermUpdate::default())
     }
 
     pub fn screen_resize(&mut self, cols: u16, rows: u16) {
         self.screen_primary.resize(cols, rows);
         self.screen_alternate.resize(cols, rows);
+    }
+
+    pub fn reset_bell(&mut self) -> bool {
+        mem::replace(&mut self.bell, false)
+    }
+
+    pub fn reset_report_requests(&mut self) -> Drain<VTReport> {
+        self.report_requests.drain()
     }
 }
 
@@ -81,10 +83,10 @@ impl VTDispatch for TermState {
     fn screen_alternate(&mut self) -> &mut Self::Screen { &mut self.screen_alternate }
 
     fn switch_screen(&mut self, screen: VTScreenChoice) {
-        if (screen != self.screen_current) {
-            self.update.screen_switched = true;
+        if screen != self.screen_current {
+            self.screen_current = screen;
+            self.screen_mut().set_dirty();
         }
-        self.screen_current = screen;
     }
 
     fn set_mode(&mut self, mode: VTMode, enable: bool) {
@@ -95,11 +97,11 @@ impl VTDispatch for TermState {
     }
 
     fn report_request(&mut self, report: VTReport) {
-        self.update.report_requests.push(report);
+        self.report_requests.push(report);
     }
 
     fn bell(&mut self) {
-        self.update.bell = true;
+        self.bell = true;
     }
 
     // TP extensions:

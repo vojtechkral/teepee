@@ -143,7 +143,7 @@ impl VTInput {
         }
     }
 
-    fn input_fkey(fkey: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+    fn input_fkey(fkey: u8, modifier: Modifier, buffer: &mut [u8]) -> io::Result<usize> {
         match fkey {
             1  => Self::input_ss3(b'P', modifier, buffer),
             2  => Self::input_ss3(b'Q', modifier, buffer),
@@ -169,7 +169,7 @@ impl VTInput {
         }
     }
 
-    fn input_ascii(ch: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {
+    fn input_ascii(ch: u8, modifier: Modifier, mut buffer: &mut [u8]) -> io::Result<usize> {   // XXX: unused?
         let alt = modifier.contains(Modifier::ALT);
         let control = modifier.contains(Modifier::CONTROL);
         let mut size = 0;

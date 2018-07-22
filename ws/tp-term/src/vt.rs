@@ -1,12 +1,13 @@
 use std::ops;
-use std::slice::Iter;
 
 use utf8;
+
 
 // TODO: comment
 // https://vt100.net/emu/dec_ansi_parser
 
 // XXX: OSC may be terminated by bell (xterm extension?)
+
 
 bitflags! {
     pub struct VTRendition: u8 {
@@ -27,7 +28,7 @@ bitflags! {
 
 impl Default for VTRendition {
     fn default() -> VTRendition {
-        VTRendition::DIRTY    // A sensible default, methinks
+        VTRendition::DIRTY
     }
 }
 

@@ -1,13 +1,13 @@
 use std::{mem, ptr};
 use std::cell::RefCell;
-#[cfg(unix)] use std::os::unix::io::{RawFd, AsRawFd, FromRawFd};
+#[cfg(unix)] use std::os::unix::io::AsRawFd;
 
 use glib_sys as glib_ffi;
 
 use glib::prelude::*;
 use glib::translate::*;
 use glib::CallbackGuard;
-use glib_sys::{gpointer, gboolean, GIOChannel, GIOCondition};
+use glib_sys::{gpointer, gboolean, GIOChannel};
 
 pub use glib::{IOCondition, SourceId};
 
@@ -46,13 +46,6 @@ impl IOChannel {
         let fd = fd.as_raw_fd();
         unsafe {
             IOChannel::from_glib_none(glib_ffi::g_io_channel_unix_new(fd))
-        }
-    }
-
-    #[cfg(unix)]
-    pub fn get_fd(&self) -> RawFd {
-        unsafe {
-            glib_ffi::g_io_channel_unix_get_fd(self.to_glib_none().0)
         }
     }
 

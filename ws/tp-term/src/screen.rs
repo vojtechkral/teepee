@@ -1,5 +1,4 @@
 use std::{mem, ops};
-use std::str::Chars;
 use std::collections::VecDeque;
 use unicode_width::UnicodeWidthChar;
 
@@ -66,12 +65,19 @@ impl Cell {
     //     }
     // }
 
-    pub fn dirty(&self) -> bool {
-        self.style.rendition.contains(VTRendition::DIRTY)
-    }
+    // pub fn dirty(&self) -> bool {   // XXX: needed?
+    //     self.style.rendition.contains(VTRendition::DIRTY)
+    // }
 
+    // XXX: make the *dirty functions private?
     pub fn set_dirty(&mut self, dirty: bool) {
         self.style.rendition.set(VTRendition::DIRTY, dirty);
+    }
+
+    pub fn reset_dirty(&mut self) -> bool {
+        let res = self.style.rendition.contains(VTRendition::DIRTY);
+        self.style.rendition.set(VTRendition::DIRTY, false);
+        res
     }
 
     pub fn push(&mut self, ch: char) {
@@ -108,14 +114,18 @@ pub const GRAPHICS: [char ; 32] = [
 #[derive(Debug, Clone)]
 pub struct Line {
     chars: Vec<Cell>,
+    dirty: bool,
 }
 
 impl Line {
     pub fn new(ch: Cell, width: u32) -> Line {
         Line {
             chars: vec![ch ; width as usize],
+            dirty: true,
         }
     }
+
+    pub fn reset_dirty(&mut self) -> bool { mem::replace(&mut self.dirty, false) }
 
     fn fill(&mut self, start: usize, end: usize, value: Cell) {
         self.chars.iter_mut()
@@ -190,6 +200,10 @@ pub struct Screen {
     tabs: Vec<bool>,
     /// The actual character data
     lines: VecDeque<Line>,
+    /// Dirty flag: indicates if the whole screen needs re-rendering
+    dirty: bool,
+    /// Records number of scrolled lines for the purposes of rendering
+    scrolled_lines: u32,
 }
 
 impl Screen {
@@ -214,11 +228,13 @@ impl Screen {
             scroll_rg: (0, size.1 - 1),
             tabs,
             lines,
+            dirty: true,
+            scrolled_lines: 0,
         }
     }
 
     /// Iterate Lines
-    pub fn line_iter(&mut self) -> impl ExactSizeIterator + Iterator<Item=&mut Line> {
+    pub fn line_iter(&mut self) -> impl ExactSizeIterator + Iterator<Item=&mut Line> {   // XXX: remove?
         self.lines.iter_mut()
     }
 
@@ -285,6 +301,7 @@ impl Screen {
             // 2. Shift lines in SR up by num
             for i in range.0 + num .. range.1 + 1 {
                 self.lines.swap(i as usize, (i - num) as usize);
+                self.lines[i as usize].dirty = true;
             }
         } else {
             // Scroll down
@@ -322,7 +339,7 @@ impl Screen {
         if rows < self.size.1 {
             let diff = self.size.1 - rows;
 
-            // FIXME: try to remove empty lines from back first
+            // FIXME: try to remove empty lines from back first (?)
 
             for _ in 0 .. diff {
                 let _line = self.lines.pop_front();
@@ -348,6 +365,29 @@ impl Screen {
         }
 
         self.size = (cols, rows);
+    }
+
+    pub fn set_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    fn reset_dirty(&mut self) -> bool { mem::replace(&mut self.dirty, false) }
+
+    pub fn reset_scrolled_lines(&mut self) -> u32 {
+        mem::replace(&mut self.scrolled_lines, 0)
+    }
+
+    pub fn render<F>(&mut self, cell_render: F) where F: Fn(&Cell, usize, usize, bool) {
+        let screen_dirty = self.reset_dirty();
+
+        for (y, line) in self.lines.iter_mut().enumerate() {
+            let line_dirty = line.reset_dirty();
+
+            for (x, cell) in line.iter_mut().enumerate() {
+                let cell_dirty = cell.reset_dirty();
+                cell_render(&cell, x, y, screen_dirty || line_dirty || cell_dirty);
+            }
+        }
     }
 }
 
@@ -418,7 +458,8 @@ impl VTScreen for Screen {
         let x = self.x();
         let empty_char = self.empty_char();
         let line = self.current_line();
-        for c in line[x..].iter_mut() {
+        let end = line.len().min(x + num as usize);
+        for c in line[x..end].iter_mut() {
             *c = empty_char.clone();
         }
     }
@@ -534,7 +575,11 @@ impl VTScreen for Screen {
                 self.lines.push_front(empty);
             }
 
-            // FIXME: scrollup rendering metadata
+            if num > 0 {
+                self.scrolled_lines += num as u32;
+            } else {
+                self.dirty = true;
+            }
         } else {
             // Scroll the scrolling region
             let scroll_rg = self.scroll_rg;
