@@ -1,123 +1,31 @@
-/// Scrollback implmenetation: TODO
-/// None if this works yet
+/// Scrollback support
+///
+/// Currently there is just one scrollback implementation, the `MemScrollback`
 
 use std::mem;
-use std::ops;
-use std::collections::VecDeque;
+use std::rc::Rc;
+use std::cell::UnsafeCell;
+use std::iter;
+use std::collections::{VecDeque, vec_deque};
 
-use ::{Line, Cell, Style, VTColor, VTRendition};
+use ::{Line, Cell, Style, VTColor};
 
-
-pub trait VTScrollback {
-    fn push(&mut self, line: Line);
-}
-
-
-// bitflags! {
-//     pub struct PieceFlags: u8 {
-//         const NONE = 0;
-//         const COL_FG    = 1 << 0;
-//         const COL_BG    = 1 << 0;
-//         const RENDITION = 1 << 0;
-//         const LAST      = 1 << 0;
-//     }
-// }
-
-// impl Default for PieceFlags {
-//     fn default() -> PieceFlags { PieceFlags::NONE }
-// }
-
-// impl PieceFlags {
-//     fn with_style(style: Style) -> PieceFlags {
-//         let mut res = PieceFlags::NONE;
-//         if style.col_fg != VTColor::DefaultFg { res |= PieceFlags::COL_FG; }
-//         if style.col_bg != VTColor::DefaultBg { res |= PieceFlags::COL_BG; }
-//         if style.rendition != VTRendition::default() { res |= PieceFlags::RENDITION; }
-
-//         res
-//     }
-
-//     fn is_last(&self) -> bool {
-//         self.contains(PieceFlags::LAST)
-//     }
-// }
-
-// #[derive(Debug, Default)]
-// #[repr(C)]
-// struct PieceHeader {
-//     len: u16,
-//     prev: u8,
-//     flags: PieceFlags,
-// }
-
-// const HEADER_SIZE: usize = mem::size_of::<PieceHeader>();
-// const MAX_PIECE_SIZE: usize = 1024 - HEADER_SIZE;
-
-// impl PieceHeader {
-//     fn new(len: u16, prev: u8, flags: PieceFlags) -> PieceHeader {
-//         PieceHeader { len, prev, flags }
-//     }
-
-//     fn prev(&self) -> usize {
-//         self.prev * 4 + 2
-//     }
-
-//     fn set_prev(&mut self, mut prev: usize) {
-//         prev -= 2;
-//         assert_eq!(prev & 3, 0, "MemScrollback: Piece header not aligned to 4 bytes");
-//         prev /= 4;
-//         self.prev = prev as u8;
-//     }
-// }
-
-// const PAGE_SIZE: usize = 4096;
-
-// #[derive(Debug)]
-// struct Page(Vec<u8>);
-
-// impl Page {
-//     fn new() -> Page {
-//         let mut page = Vec::with_capacity(PAGE_SIZE);
-//         // Initialize line number to 0 (2 bytes) and add an empty PieceHeader
-//         page.resize(2 + HEADER_SIZE, 0u8);
-
-//         Page(page)
-//     }
-
-//     fn num_lines(&self) -> &u16 { unsafe { mem::transmute(self.0.as_ptr()) } }
-//     fn num_lines_mut(&mut self) -> &mut u16 { unsafe { mem::transmute(self.0.as_mut_ptr()) } }
-
-//     fn tail_header_mut(&mut self) -> (&mut PieceHeader, usize) {
-//         let pos = self.0.len() - HEADER_SIZE;
-//         let res = unsafe { mem::transmute(self.0.as_mut_ptr().offset(pos as isize)) };
-//         (res, pos)
-//     }
-
-//     fn push(&mut self, line: Line) -> Result<(), Line> {
-//         if line.is_empty() {
-//             let (header, header_pos) = self.tail_header_mut();
-//             // header.
-//         }
-
-//         // TODO
-
-//         unimplemented!()
-//     }
-// }
 
 bitflags! {
-    /// Based on VTRendition, except without stuff that we either don't implement (BLINKING, INVISIBLE) or don't need for scrollback (WIDE)
+    /// Based on VTRendition, except without stuff that we don't need for scrollback
     /// and additionally with flags for color storage.
-    pub struct SBRendition: u8 {
-        const NONE = 0;
+    struct SBRendition: u8 {
+        const NONE       = 0;
         const BOLD       = 1 << 0;
         const UNDERLINED = 1 << 1;
-        const INVERSE    = 1 << 3;
+        const INVERSE    = 1 << 2;
+        const BLINKING   = 1 << 3;
+        const INVISIBLE  = 1 << 4;
 
         // MemScrollback bookkeeping:
-        const HAS_FG     = 1 << 4;
-        const HAS_BG     = 1 << 5;
-        const LAST       = 1 << 6;
+        const HAS_FG     = 1 << 5;
+        const HAS_BG     = 1 << 6;
+        const LAST       = 1 << 7;
     }
 }
 
@@ -127,7 +35,7 @@ impl Default for SBRendition {
 
 impl From<Style> for SBRendition {
     fn from(style: Style) -> SBRendition {
-        let mut res = SBRendition::from_bits_truncate(style.rendition.bits() & 7);
+        let mut res = SBRendition::from_bits_truncate(style.rendition.bits() & 0x1f);
         if style.col_fg != VTColor::DefaultFg { res |= SBRendition::HAS_FG; }
         if style.col_bg != VTColor::DefaultBg { res |= SBRendition::HAS_BG; }
         res
@@ -139,10 +47,13 @@ impl SBRendition {
         self.contains(SBRendition::LAST)
     }
 
+    fn has_fg(&self) -> bool { self.contains(SBRendition::HAS_FG) }
+    fn has_bg(&self) -> bool { self.contains(SBRendition::HAS_BG) }
+
     fn header_size(&self) -> usize {
-        1
-        + if self.contains(SBRendition::HAS_BG) { 4 } else { 0 }
-        + if self.contains(SBRendition::HAS_FG) { 4 } else { 0 }
+        2  // flags & size
+        + if self.has_fg() { 4 } else { 0 }
+        + if self.has_bg() { 4 } else { 0 }
     }
 }
 
@@ -150,100 +61,381 @@ impl VTColor {
     fn memsb_encode(&self) -> [u8 ; 4] {
         unsafe { mem::transmute(*self) }
     }
+
+    fn memsb_decode(data: &[u8]) -> VTColor {
+        let mut color = [0u8 ; 4];
+        color.copy_from_slice(&data[..4]);
+        unsafe { mem::transmute(color) }
+    }
 }
 
-impl Line {
-    fn memsb_size(&self) -> usize {
-        let first_rend: SBRendition = match self.get(0) {
+
+const CHUNK_SIZE: usize = 32 * 1024;
+
+/// A line stored in the `MemScrollback`
+#[derive(Debug)]
+pub struct MemSBLine {
+    chunk: Rc<UnsafeCell<Vec<u8>>>,
+    offset: usize,
+}
+
+impl MemSBLine {
+    fn new(line: &Line) -> MemSBLine {
+        let mut res = MemSBLine {
+            chunk: Rc::new(UnsafeCell::new(Vec::with_capacity(CHUNK_SIZE))),
+            offset: 0,
+        };
+        res.encode_line(line);
+        res
+    }
+
+    fn from_previous(line: &Line, prev: &MemSBLine) -> Option<MemSBLine> {
+        if Self::line_size(line) <= prev.chunk().capacity() - prev.chunk().len() {
+            let mut res = MemSBLine {
+                chunk: Rc::clone(&prev.chunk),
+                offset: prev.chunk().len(),
+            };
+            res.encode_line(line);
+            Some(res)
+        } else {
+            None
+        }
+    }
+
+    fn chunk(&self) -> &Vec<u8> { unsafe { &*self.chunk.get() } }
+    fn chunk_mut(&mut self) -> &mut Vec<u8> { unsafe { &mut *self.chunk.get() } }
+
+    fn encode_piece_header(&mut self, style: Style) {
+        let rend: SBRendition = style.into();
+
+        // Encode flags and size
+        self.chunk_mut().push(rend.bits());
+        self.chunk_mut().push(0);   // Placeholder, will be modified as needed
+
+        // Encode colors if needed
+        if rend.has_fg() {
+            self.chunk_mut().extend(&style.col_fg.memsb_encode());
+        }
+        if rend.has_bg() {
+            self.chunk_mut().extend(&style.col_bg.memsb_encode());
+        }
+    }
+
+    fn trim_count(line: &Line) -> usize {
+        let default_cell = Cell::default();
+        line.iter().rev().take_while(|cell| **cell == default_cell).count()
+    }
+
+    fn encode_line(&mut self, line: &Line) {
+        let num_cells = line.len() - Self::trim_count(line);
+
+        let mut style = line.get(0).map_or(Style::default(), |cell| cell.style);
+        let mut piece_size = 0u32;
+
+        // Start writing the first piece
+        let mut piece_start = self.chunk().len();
+        self.encode_piece_header(style);
+
+        for cell in &line[..num_cells] {
+            if cell.style != style || piece_size == 255 {
+                // Need to finalize the current piece and start a new one
+                self.chunk_mut()[piece_start + 1] = piece_size as u8;    // Write the final size of the current piece
+                style = cell.style;
+                piece_size = 1;
+                piece_start = self.chunk().len();
+                self.encode_piece_header(style);
+            } else {
+                piece_size += 1;
+            }
+
+            self.chunk_mut().extend(cell.as_str().as_bytes());
+        }
+
+        // Finalize the last piece
+        self.chunk_mut()[piece_start] |= SBRendition::LAST.bits();
+        self.chunk_mut()[piece_start + 1] = piece_size as u8;
+    }
+
+    fn line_size(line: &Line) -> usize {
+        let num_cells = line.len() - Self::trim_count(line);
+
+        let style = match line.get(0) {
             Some(cell) => cell.style,
-            None => return 1,  // An empty line requires 1 LAST marker
-        }.into();
+            None => return SBRendition::default().header_size(),
+        };
+        let rend: SBRendition = style.into();
 
-        self.iter().skip(1).fold((first_rend.header_size(), first_rend), |(mut size, prev_rend), cell| {
-            let rend: SBRendition = cell.style.into();
-            if rend != prev_rend { size += rend.header_size(); }
-            (size, rend)
-        }).0 + 1   // + 1 for the LAST marker
+        let mut piece_size = 0u32;
+
+        line[..num_cells].iter().fold((rend.header_size(), style), |(mut size, style), cell| {
+            if cell.style != style || piece_size == 255 {
+                let rend: SBRendition = cell.style.into();
+                size += rend.header_size();
+                piece_size = 1;
+            } else {
+                piece_size += 1;
+            }
+
+            (size + cell.as_str().len(), cell.style)
+        }).0
+    }
+
+    /// Obtain a piece iterator of this line. A piece is a sub-string of the line with contiguous `Style`.
+    /// See `MemScrollback` documentation for more information.
+    pub fn iter(&self) -> PieceIter {
+        PieceIter::new(self)
     }
 }
 
-const PAGE_SIZE: usize = 4096;
 
+/// Holds a reference to a substring of a scrollback line in which all characters have contiguously the same `Style`
+#[derive(Debug, PartialEq, Eq)]
+pub struct Piece<'a> {
+    /// The string data of this piece
+    pub string: &'a str,
+    /// The `Style` used to render this line substring
+    pub style: Style,
+}
+
+/// Iterates `MemSBLine` substrings. See `MemScrollback` or `Piece` documentation for more information.
 #[derive(Debug)]
-struct Page(Vec<u8>);
+pub struct PieceIter<'a> {
+    chunk: &'a Vec<u8>,
+    offset: usize,
+    last_seen: bool,
+}
 
-impl Page {
-    fn new() -> Page {
-        let page = Vec::with_capacity(PAGE_SIZE);
-        Page(page)
+impl<'a> PieceIter<'a> {
+    fn new(line: &'a MemSBLine) -> PieceIter<'a> {
+        PieceIter {
+            chunk: line.chunk(),
+            offset: line.offset,
+            last_seen: false,
+        }
     }
+}
 
-    fn free_space(&self) -> usize {
-        self.capacity() - self.len()
+impl<'a> iter::Iterator for PieceIter<'a> {
+    type Item = Piece<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.last_seen {
+            return None;
+        }
+
+        let rend = SBRendition::from_bits_truncate(self.chunk[self.offset]);
+        let size = self.chunk[self.offset + 1] as usize;
+        if rend.is_last() || size == 0 {
+            self.last_seen = true;
+        }
+
+        let mut style = Style::default();
+        let mut data_offset = self.offset + 2;
+        if rend.has_fg() {
+            style.col_fg = VTColor::memsb_decode(&self.chunk[data_offset .. data_offset + 4]);
+            data_offset += 4;
+        }
+        if rend.has_bg() {
+            style.col_bg = VTColor::memsb_decode(&self.chunk[data_offset .. data_offset + 4]);
+            data_offset += 4;
+        }
+
+        let str_slice = &self.chunk[data_offset .. data_offset + size];
+        let string = unsafe { ::std::str::from_utf8_unchecked(str_slice) };
+
+        // Advance state
+        self.offset = data_offset + string.len();
+
+        Some(Piece {
+            string,
+            style,
+        })
     }
 }
 
-impl ops::Deref for Page {
-    type Target = Vec<u8>;
-    fn deref(&self) -> &Vec<u8> { &self.0 }
-}
+pub type LineIter<'a> = vec_deque::Iter<'a, MemSBLine>;
 
-impl ops::DerefMut for Page {
-    fn deref_mut(&mut self) -> &mut Vec<u8> { &mut self.0 }
-}
-
-/// MemScrollback Line bookkeeping data
-#[derive(Debug)]
-struct LineMeta(usize, usize);
+/// An efficient memory-backed scrollback implementation
+///
+/// The MemScrollback stores shell screen lines in a compressed way in a queue-like data structure.
+/// Each line is right-trimmed removing default (empty) cells and then broken down into "pieces" - substrings in which
+/// characters share the same rendering `Style`. Pieces are then stored in memory along with the Style data.
+/// Therefore, `Style` data is only stored when it changes along the line.
+/// Additionally, allocating memory by larger chunks is used instead of allocation smaller pieces for each line
+/// (currently a chunk size of 32k is used).
+///
+/// Each piece is layed out in memory as follows:
+///
+/// `flags: u8 | length: u8 | [fg_color: u32] | [bg_color: u32] | UTF-8 string data ...`
+///
+/// The foreground and/or background color is only stored when it differs from the default.
 
 #[derive(Debug)]
 pub struct MemScrollback {
-    directory: VecDeque<LineMeta>,
-    pages: VecDeque<Page>,
-    pages_popped: usize,
+    lines: VecDeque<MemSBLine>,
+    mem_size: usize,
     mem_cap: usize,
 }
 
 impl MemScrollback {
+    /// Constructs a new `MemScrollback` with that will consume a maximum of `mem_cap` bytes of memory
     pub fn new(mem_cap: usize) -> MemScrollback {
-        let mut pages = VecDeque::new();
-        pages.push_back(Page::new());
-
         MemScrollback {
-            directory: VecDeque::new(),
-            pages,
-            pages_popped: 0,
+            lines: VecDeque::new(),
+            mem_size: 0,
             mem_cap,
         }
     }
 
-    pub fn lines(&self) -> usize {
-        self.directory.len()
+    fn pop_over_cap(&mut self) {
+        while self.mem_size > self.mem_cap {
+            let front = self.lines.pop_front().expect("MemScrollback: Internal error: mem_size is non-zero but there are no lines");
+            while self.lines.front().map_or(false, |line| Rc::ptr_eq(&line.chunk, &front.chunk)) {
+                self.lines.pop_front();
+            }
+            assert_eq!(Rc::strong_count(&front.chunk), 1, "MemScrollback: Internal error: Memory leak");
+            self.mem_size -= CHUNK_SIZE;
+        }
+    }
+
+    /// Push a line into the scrollback. This is typically only used by a screen data structure.
+    pub fn push(&mut self, line: Line) {
+        // Encode the line into either the previous chunk or a new one, get back MemSBLine
+        let line = match self.lines.back().and_then(|prev| MemSBLine::from_previous(&line, prev)) {
+            Some(line) => line,
+            None => {
+                // Pretend as if we've allocated the chunk and ensure mem_size < mem_cap before actually allocating it
+                self.mem_size += CHUNK_SIZE;
+                self.pop_over_cap();
+                MemSBLine::new(&line)
+            },
+        };
+
+        // Append the MemSBLine into our deque
+        self.lines.push_back(line);
+    }
+
+    /// Nuber of lines in the scollback.
+    pub fn len(&self) -> usize { self.lines.len() }
+
+    /// Size of memory (in bytes) currently consumed by the scrollback.
+    /// (Note that this number only entails the space designated for the actual scrollback data, it doesn't include
+    /// some additional book-keeping data that is also required, which however typically is not significantly large.)
+    pub fn mem_size(&self) -> usize {
+        self.mem_size
+    }
+
+    /// Set the memory cap (in bytes) of the scrollback data storage.
+    /// Note that internaly `MemScrollback` will round this down to a multiple of the size used for allocation chunks of memory,
+    /// which is in the range of tens of kilobytes (this means that if a very low value is used the scrollback
+    /// won't be able to hold any lines at all).
+    pub fn set_mem_cap(&mut self, mem_cap: usize) {
+        self.mem_cap = mem_cap;
+        self.pop_over_cap();
+    }
+
+    /// Obtain a line iterator, it iterates in the older-to-newer direction
+    pub fn iter(&self) -> LineIter {
+        self.lines.iter()
+    }
+
+    // TODO: implement range-based access when it's been stable enough
+}
+
+impl Default for MemScrollback {
+    fn default() -> MemScrollback {
+        MemScrollback::new(20 * 1024 * 1024)
     }
 }
 
-impl VTScrollback for MemScrollback {
-    fn push(&mut self, mut line: Line) {
-        // First, trim default cells from the right
-        while line.last().map(|cell| *cell == Cell::default()).unwrap_or(false) {
-            line.pop();
-        }
 
-        let encode_size = line.memsb_size();
-        let mut page_num = (self.pages.len() - 1).wrapping_add(self.pages_popped);
-        if self.pages.back().unwrap().free_space() < encode_size {
-            self.pages.push_back(Page::new());
-        }
-        let page = self.pages.back_mut().unwrap();
 
-        unimplemented!()
+
+#[cfg(test)]
+mod tests {
+use super::*;
+
+const MEM_CAP: usize = 1 * 1024 * 1024;
+static LONG_STR: [u8; 200] = [b'a'; 200];
+
+fn test_line() -> (Line, Vec<Piece<'static>>) {
+    let style_blue = Style::with_fg(VTColor::Indexed(::VTCOLOR_BLUE));
+    let style_red = Style::with_fg(VTColor::Indexed(::VTCOLOR_RED));
+    let mut line = Line::new();
+
+    line.push(Cell::new('a', Style::default()));
+    line.push(Cell::new('b', style_blue));
+    line.push(Cell::new('c', style_red));
+
+    let mut pieces = Vec::new();
+    pieces.push(Piece { string: "a", style: Style::default() });
+    pieces.push(Piece { string: "b", style: style_blue });
+    pieces.push(Piece { string: "c", style: style_red });
+
+    (line, pieces)
+}
+
+fn wide_line() -> (Line, Vec<Piece<'static>>) {
+    let (mut test_line, test_pieces) = test_line();
+    let mut line = Line::with_size(Cell::new('a', Style::default()), 150);
+    let mut line2 = line.clone();
+
+    line.append(&mut test_line);
+    line.append(&mut line2);
+
+    let string = unsafe { ::std::str::from_utf8_unchecked(&LONG_STR[..]) };
+    let mut pieces = Vec::new();
+    pieces.push(Piece { string, style: Style::default() });
+
+    (line, pieces)
+}
+
+#[test]
+fn memscrollback_basic() {
+    let (mut line, pieces) = test_line();
+
+    let mut scrollback = MemScrollback::new(MEM_CAP);
+    for i in 0..5 { line.push(Cell::default()); }   // Ensure trimming works
+    scrollback.push(line.clone());
+
+    let line_iter = scrollback.iter().next().unwrap();
+    assert_eq!(line_iter.iter().count(), pieces.iter().count());
+    for (p1, p2) in line_iter.iter().zip(pieces.iter()) {
+        assert_eq!(p1, *p2);
     }
 }
 
+#[test]
+fn memscrollback_line_size() {
+    let lines = vec![
+        test_line().0,
+        wide_line().0,
+    ];
 
-#[derive(Debug, Default)]
-struct NullScrollback;
+    for line in lines {
+        let size = MemSBLine::line_size(&line);
+        let sbline = MemSBLine::new(&line);
+        let sbline2 = MemSBLine::from_previous(&line, &sbline).unwrap();
+        assert_eq!(size, sbline2.offset);
+    }
+}
 
-impl VTScrollback for NullScrollback {
-    fn push(&mut self, _line: Line) {}
+#[test]
+fn memscrollback_mem_cap() {
+    let (line, _) = test_line();
+
+    let cap = 2*CHUNK_SIZE;
+    let lines = cap;
+    let line_size = MemSBLine::line_size(&line);
+    let lines_per_chunk = CHUNK_SIZE / line_size;
+
+    let mut scrollback = MemScrollback::new(cap);
+    for _ in 0..lines {
+        scrollback.push(line.clone());
+    }
+
+    assert_eq!(scrollback.mem_size(), cap);
+    assert_eq!(scrollback.len(), lines % lines_per_chunk + lines_per_chunk);
+}
+
 }

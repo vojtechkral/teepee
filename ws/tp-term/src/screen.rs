@@ -4,6 +4,7 @@ use unicode_width::UnicodeWidthChar;
 
 use ::smallstring::*;
 use ::vt::*;
+use ::scrollback::MemScrollback;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,6 +12,12 @@ pub struct Style {
     pub col_fg: VTColor,
     pub col_bg: VTColor,
     pub rendition: VTRendition,
+}
+
+impl Style {
+    pub fn with_fg(col_fg: VTColor) -> Style { Style { col_fg, col_bg: VTColor::DefaultBg, rendition: VTRendition::default() } }
+    pub fn with_bg(col_bg: VTColor) -> Style { Style { col_fg: VTColor::DefaultFg, col_bg, rendition: VTRendition::default() } }
+    pub fn with_rendition(rendition: VTRendition) -> Style { Style { col_fg: VTColor::DefaultFg, col_bg: VTColor::DefaultBg, rendition } }
 }
 
 impl Default for Style {
@@ -96,8 +103,10 @@ impl Cell {
 
 impl Default for Cell {
     fn default() -> Cell {
+        let mut chars = SmallString::new();
+        chars.push(' ');
         Cell {
-            chars: SmallString::from_str(" "),
+            chars,
             style: Style::default(),
         }
     }
@@ -113,14 +122,21 @@ pub const GRAPHICS: [char ; 32] = [
 
 #[derive(Debug, Clone)]
 pub struct Line {
-    chars: Vec<Cell>,
+    cells: Vec<Cell>,
     dirty: bool,
 }
 
 impl Line {
-    pub fn new(ch: Cell, width: u32) -> Line {
+    pub fn new() -> Line {
         Line {
-            chars: vec![ch ; width as usize],
+            cells: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    pub fn with_size(ch: Cell, size: u32) -> Line {
+        Line {
+            cells: vec![ch ; size as usize],
             dirty: true,
         }
     }
@@ -128,7 +144,7 @@ impl Line {
     pub fn reset_dirty(&mut self) -> bool { mem::replace(&mut self.dirty, false) }
 
     fn fill(&mut self, start: usize, end: usize, value: Cell) {
-        self.chars.iter_mut()
+        self.cells.iter_mut()
             .skip(start)
             .take(end.saturating_sub(start))
             .for_each(|c| *c = value.clone());
@@ -137,11 +153,11 @@ impl Line {
 
 impl ops::Deref for Line {
     type Target = Vec<Cell>;
-    fn deref(&self) -> &Self::Target { &self.chars }
+    fn deref(&self) -> &Self::Target { &self.cells }
 }
 
 impl ops::DerefMut for Line {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.chars }
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.cells }
 }
 
 
@@ -200,6 +216,8 @@ pub struct Screen {
     tabs: Vec<bool>,
     /// The actual character data
     lines: VecDeque<Line>,
+    /// Scrollback, if any
+    scrollback: Option<MemScrollback>,
     /// Dirty flag: indicates if the whole screen needs re-rendering
     dirty: bool,
     /// Records number of scrolled lines for the purposes of rendering
@@ -215,7 +233,7 @@ impl Screen {
     pub fn with_size(size: (u32, u32)) -> Screen {
         let mut lines = VecDeque::with_capacity(size.1 as usize);
         for _ in 0 .. size.1 {
-            lines.push_back(Line::new(Cell::default(), size.0));
+            lines.push_back(Line::with_size(Cell::default(), size.0));
         }
 
         let tabs = (0 .. size.0).map(|i| i > 0 && i % 8 == 0).collect();
@@ -228,9 +246,15 @@ impl Screen {
             scroll_rg: (0, size.1 - 1),
             tabs,
             lines,
+            scrollback: None,
             dirty: true,
             scrolled_lines: 0,
         }
+    }
+
+    pub fn with_scrollback(mut self, scrollback: MemScrollback) -> Screen {
+        self.scrollback = Some(scrollback);
+        self
     }
 
     /// Iterate Lines
@@ -243,7 +267,7 @@ impl Screen {
     }
 
     fn empty_line(&self) -> Line {
-        Line::new(self.empty_char(), self.size.0)
+        Line::with_size(self.empty_char(), self.size.0)
     }
 
     fn x(&self) -> usize { self.cursor.x as usize }
@@ -276,7 +300,13 @@ impl Screen {
         self.lines.get_mut(self.cursor.y as usize).expect("Cursor position out of bounds")
     }
 
-    pub fn mode(&self) -> VTMode { self.mode }   // XXX: needed? Should not be needed.
+    // pub fn mode(&self) -> VTMode { self.mode }   // XXX: needed? Should not be needed.
+
+    fn push_scrollback(&mut self, line: Line) {
+        if let Some(ref mut scrollback) = self.scrollback.as_mut() {
+            scrollback.push(line);
+        }
+    }
 
     /// Scroll lines in the range (top, bottom), inserting blank lines and popping to scrollback if appropriate
     fn scroll_generic(&mut self, range: (u32, u32), num: i32) {
@@ -291,10 +321,10 @@ impl Screen {
 
             // 1. Pop top lines, either onto scrollback if SR is at the top of the screen or discard
             for i in range.0 .. range.0 + num {
-                let mut empty = self.empty_line();
-                mem::swap(&mut empty, self.lines.get_mut(i as usize).expect("Lines index out of bounds"));
+                let mut line = self.empty_line();
+                mem::swap(&mut line, self.lines.get_mut(i as usize).expect("Lines index out of bounds"));
                 if range.0 == 0 {
-                    // TODO: Scrollback
+                    self.push_scrollback(line);
                 }
             }
 
@@ -342,8 +372,9 @@ impl Screen {
             // FIXME: try to remove empty lines from back first (?)
 
             for _ in 0 .. diff {
-                let _line = self.lines.pop_front();
-                // TODO: Scrollback
+                if let Some(line) = self.lines.pop_front() {
+                    self.push_scrollback(line);
+                }
             }
 
             self.cursor.y = self.cursor.y.saturating_sub(diff);
@@ -353,7 +384,7 @@ impl Screen {
             self.scroll_rg.0 = self.scroll_rg.0.min(self.scroll_rg.1 - 1);
         } else if rows > self.size.1 {
             for _ in self.size.1 .. rows {
-                self.lines.push_back(Line::new(Cell::with_style(self.cursor.style), cols));
+                self.lines.push_back(Line::with_size(Cell::with_style(self.cursor.style), cols));
             }
         }
 
@@ -499,8 +530,8 @@ impl VTScreen for Screen {
 
         match erase {
             All => {
-                while let Some(_line) = self.lines.pop_front() {
-                    // TODO: Scrollback
+                while let Some(line) = self.lines.pop_front() {
+                    self.push_scrollback(line);
                 }
                 let empty_line = self.empty_line();
                 self.lines.resize(h, empty_line);
@@ -562,8 +593,9 @@ impl VTScreen for Screen {
 
             for _ in 0 .. num {
                 // Scroll up
-                let _line = self.lines.pop_front();
-                // TODO: Scrollback
+                if let Some(line) = self.lines.pop_front() {
+                    self.push_scrollback(line);
+                }
                 let empty = self.empty_line();
                 self.lines.push_back(empty);
             }
@@ -662,7 +694,7 @@ impl VTScreen for Screen {
     }
 
     fn alignment_test(&mut self) {
-        let eeeeee = Line::new(Cell::new('E', self.cursor.style), self.size.0);
+        let eeeeee = Line::with_size(Cell::new('E', self.cursor.style), self.size.0);
         for line in self.lines.iter_mut() {
             *line = eeeeee.clone();
         }
@@ -679,6 +711,7 @@ use super::*;
 #[test]
 fn screen_scroll() {
     let mut screen = Screen::with_size((1, 10));
+    // TODO
 }
 
 }

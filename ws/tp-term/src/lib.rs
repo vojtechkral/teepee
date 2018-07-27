@@ -15,7 +15,7 @@ mod screen;
 mod input;
 pub use smallstring::*;
 pub use vt::*;
-pub use scrollback::*;
+pub use scrollback::MemScrollback;
 pub use screen::*;
 pub use input::*;
 
@@ -28,21 +28,19 @@ pub struct TermState {
     screen_current: VTScreenChoice,
     screen_primary: Screen,
     screen_alternate: Screen,
-    // screen_choice_prev: VTScreenChoice,   // TODO: remove in favor of *Update
-    // update: TermUpdate,
-    // TODO: scrollback
     bell: bool,
     report_requests: ReportRequests,
 }
 
 impl TermState {
     pub fn new() -> TermState {
+        let scrollback = MemScrollback::default();
+
         TermState {
             mode: VTMode::default(),
             screen_current: VTScreenChoice::default(),
-            screen_primary: Screen::default(),
+            screen_primary: Screen::default().with_scrollback(scrollback),
             screen_alternate: Screen::default(),
-            // update: TermUpdate::default(),
             bell: false,
             report_requests: ReportRequests::new(),
         }

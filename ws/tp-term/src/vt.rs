@@ -32,6 +32,17 @@ impl Default for VTRendition {
     }
 }
 
+pub const VTCOLOR_BLACK   : u8 = 0;
+pub const VTCOLOR_RED     : u8 = 1;
+pub const VTCOLOR_GREEN   : u8 = 2;
+pub const VTCOLOR_YELLOW  : u8 = 3;
+pub const VTCOLOR_BLUE    : u8 = 4;
+pub const VTCOLOR_MAGENTA : u8 = 5;
+pub const VTCOLOR_CYAN    : u8 = 6;
+pub const VTCOLOR_WHITE   : u8 = 7;
+
+pub const VTCOLOR_BRIGHT  : u8 = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VTColor {
     DefaultFg,
