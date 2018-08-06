@@ -10,7 +10,7 @@ use smallvec::{SmallVec, Drain};
 pub mod utf8;
 mod smallstring;
 mod vt;
-mod scrollback;
+pub mod scrollback;
 mod screen;
 mod input;
 pub use smallstring::*;

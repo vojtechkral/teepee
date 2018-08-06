@@ -71,6 +71,7 @@ impl VTColor {
 
 
 const CHUNK_SIZE: usize = 32 * 1024;
+const CHUNK_OVERHEAD: usize = 2 * mem::size_of::<usize>() /* = Rc overhead */ + mem::size_of::<MemSBLine>();
 
 /// A line stored in the `MemScrollback`
 #[derive(Debug)]
@@ -90,7 +91,8 @@ impl MemSBLine {
     }
 
     fn from_previous(line: &Line, prev: &MemSBLine) -> Option<MemSBLine> {
-        if Self::line_size(line) <= prev.chunk().capacity() - prev.chunk().len() {
+        let line_size = Self::line_size(line);
+        if line_size <= prev.chunk().capacity() - prev.chunk().len() {
             let mut res = MemSBLine {
                 chunk: Rc::clone(&prev.chunk),
                 offset: prev.chunk().len(),
@@ -255,6 +257,7 @@ impl<'a> iter::Iterator for PieceIter<'a> {
 
 pub type LineIter<'a> = vec_deque::Iter<'a, MemSBLine>;
 
+
 /// An efficient memory-backed scrollback implementation
 ///
 /// The MemScrollback stores shell screen lines in a compressed way in a queue-like data structure.
@@ -269,11 +272,10 @@ pub type LineIter<'a> = vec_deque::Iter<'a, MemSBLine>;
 /// `flags: u8 | length: u8 | [fg_color: u32] | [bg_color: u32] | UTF-8 string data ...`
 ///
 /// The foreground and/or background color is only stored when it differs from the default.
-
 #[derive(Debug)]
 pub struct MemScrollback {
     lines: VecDeque<MemSBLine>,
-    mem_size: usize,
+    data_size: usize,
     mem_cap: usize,
 }
 
@@ -282,53 +284,64 @@ impl MemScrollback {
     pub fn new(mem_cap: usize) -> MemScrollback {
         MemScrollback {
             lines: VecDeque::new(),
-            mem_size: 0,
+            data_size: 0,
             mem_cap,
         }
     }
 
+    fn mem_size(&self) -> usize {
+        self.lines.capacity() * mem::size_of::<MemSBLine>() + self.data_size
+    }
+
     fn pop_over_cap(&mut self) {
-        while self.mem_size > self.mem_cap {
-            let front = self.lines.pop_front().expect("MemScrollback: Internal error: mem_size is non-zero but there are no lines");
+        let mut half_lines = self.lines.len() / 2;
+        while self.mem_size() > self.mem_cap {
+            let front = match self.lines.pop_front() {
+                Some(front) => front,
+                None => return,
+            };
+
             while self.lines.front().map_or(false, |line| Rc::ptr_eq(&line.chunk, &front.chunk)) {
                 self.lines.pop_front();
             }
             assert_eq!(Rc::strong_count(&front.chunk), 1, "MemScrollback: Internal error: Memory leak");
-            self.mem_size -= CHUNK_SIZE;
+
+            let dec = front.chunk().capacity() + CHUNK_OVERHEAD;
+            self.data_size -= dec;
+
+            if self.lines.len() <= half_lines {
+                self.lines.shrink_to_fit();
+                half_lines = self.lines.len() / 2;
+            }
         }
     }
 
     /// Push a line into the scrollback. This is typically only used by a screen data structure.
     pub fn push(&mut self, line: Line) {
         // Encode the line into either the previous chunk or a new one, get back MemSBLine
-        let line = match self.lines.back().and_then(|prev| MemSBLine::from_previous(&line, prev)) {
+        let line = match self.lines.back()
+            .and_then(|prev| MemSBLine::from_previous(&line, prev)) {
             Some(line) => line,
             None => {
-                // Pretend as if we've allocated the chunk and ensure mem_size < mem_cap before actually allocating it
-                self.mem_size += CHUNK_SIZE;
-                self.pop_over_cap();
-                MemSBLine::new(&line)
+                let line = MemSBLine::new(&line);
+                let inc = line.chunk().capacity() + CHUNK_OVERHEAD;
+                self.data_size += inc;
+                line
             },
         };
 
         // Append the MemSBLine into our deque
+        // self.pop_over_cap_index();
         self.lines.push_back(line);
+        self.pop_over_cap();
     }
 
     /// Nuber of lines in the scollback.
     pub fn len(&self) -> usize { self.lines.len() }
 
-    /// Size of memory (in bytes) currently consumed by the scrollback.
-    /// (Note that this number only entails the space designated for the actual scrollback data, it doesn't include
-    /// some additional book-keeping data that is also required, which however typically is not significantly large.)
-    pub fn mem_size(&self) -> usize {
-        self.mem_size
-    }
-
-    /// Set the memory cap (in bytes) of the scrollback data storage.
-    /// Note that internaly `MemScrollback` will round this down to a multiple of the size used for allocation chunks of memory,
-    /// which is in the range of tens of kilobytes (this means that if a very low value is used the scrollback
-    /// won't be able to hold any lines at all).
+    /// Set the memory cap (in bytes) of the scrollback in-memory data storage.
+    /// Note that due to internal implementation details the actual comsumed size may be somewhat larger,
+    /// although not by a very significant ammount.
     pub fn set_mem_cap(&mut self, mem_cap: usize) {
         self.mem_cap = mem_cap;
         self.pop_over_cap();
@@ -339,7 +352,13 @@ impl MemScrollback {
         self.lines.iter()
     }
 
-    // TODO: implement range-based access when it's been stable enough
+    pub fn iter_at(&self, at: usize) -> LineIter {
+        let mut iter = self.lines.iter();
+        if at > 0 {
+            iter.nth(at - 1);
+        }
+        iter
+    }
 }
 
 impl Default for MemScrollback {
@@ -422,20 +441,37 @@ fn memscrollback_line_size() {
 
 #[test]
 fn memscrollback_mem_cap() {
-    let (line, _) = test_line();
+    let tests = vec![
+        (2*CHUNK_SIZE, CHUNK_SIZE, test_line().0),
+        (256 * 1024, 2000, wide_line().0),
+    ];
 
-    let cap = 2*CHUNK_SIZE;
-    let lines = cap;
-    let line_size = MemSBLine::line_size(&line);
-    let lines_per_chunk = CHUNK_SIZE / line_size;
+    for (cap, num_lines, line) in tests.iter() {
+        let line_size = MemSBLine::line_size(&line);
 
-    let mut scrollback = MemScrollback::new(cap);
-    for _ in 0..lines {
+        let mut scrollback = MemScrollback::new(*cap);
+        for _ in 0..*num_lines {
+            scrollback.push(line.clone());
+            let mem_size = scrollback.mem_size();
+            assert!(mem_size <= *cap, "mem_size: {}, cap: {}", mem_size, *cap);
+        }
+    }
+}
+
+#[test]
+fn memscrollback_iter_at() {
+    let (mut line, pieces) = test_line();
+
+    let mut scrollback = MemScrollback::new(MEM_CAP);
+    let num_lines = 10;
+    for i in 0..num_lines {
         scrollback.push(line.clone());
     }
 
-    assert_eq!(scrollback.mem_size(), cap);
-    assert_eq!(scrollback.len(), lines % lines_per_chunk + lines_per_chunk);
+    let at = 3;
+    let line_iter = scrollback.iter_at(3);
+    assert_eq!(line_iter.count(), num_lines - at);
 }
+
 
 }
