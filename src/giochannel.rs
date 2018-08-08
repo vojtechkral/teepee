@@ -50,7 +50,7 @@ impl IOChannel {
     }
 
     pub fn add_watch<F>(&self, condition: IOCondition, func: F) -> SourceId
-    where F: FnMut(IOChannel, IOCondition) -> Continue + Send + 'static {
+    where F: FnMut(IOChannel, IOCondition) -> Continue + Send + 'static {   // TODO: Relax Send on non-Windows
         unsafe {
             from_glib(glib_ffi::g_io_add_watch_full(
                 self.to_glib_none().0,

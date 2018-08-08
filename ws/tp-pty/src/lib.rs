@@ -55,34 +55,6 @@ fn make_controlling_tty(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-// pub struct TermSize {
-//     rows: u16,
-//     cols: u16,
-// }
-
-// impl TermSize {
-//     pub fn new(rows: u16, cols: u16) -> TermSize { TermSize { rows, cols } }
-// }
-
-// impl From<libc::winsize> for TermSize {
-//     fn from(size: libc::winsize) -> TermSize {
-//         TermSize {
-//             rows: size.ws_row,
-//             cols: size.ws_col,
-//         }
-//     }
-// }
-
-// impl From<TermSize> for libc::winsize {
-//     fn from(size: TermSize) -> libc::winsize {
-//         libc::winsize {
-//             ws_row: size.rows,
-//             ws_col: size.cols,
-//             ws_xpixel: 0,
-//             ws_ypixel: 0,
-//         }
-//     }
-// }
 
 #[derive(Debug)]
 pub struct Process {
@@ -91,7 +63,6 @@ pub struct Process {
 }
 
 impl Process {
-    // pub fn new() -> Result<Process> {
     pub fn new(mut program: Command) -> Result<Process> {
         if ! cfg!(target_os = "linux") {
             unimplemented!();
@@ -101,19 +72,6 @@ impl Process {
         let mut slave: RawFd = 0;
         try_c!(libc::openpty(&mut master, &mut slave, ptr::null_mut(), ptr::null(), ptr::null()));
         let (master, slave) = (master, slave);
-
-        println!("PTY open: ({}, {})", master, slave);
-
-        // let mut process = Command::new("/usr/bin/bash");
-        // let mut process = Command::new(program);
-
-        // if let Some(args) = args {
-        //     process.args(args);
-        // }
-
-        // if let Some(startdir) = startdir {
-        //     process.current_dir(startdir);
-        // }
 
         program.env("TERM", "xterm-256color");
 
@@ -147,11 +105,6 @@ impl Process {
         Ok(res)
     }
 
-    // pub fn resize<T: Into<TermSize>>(&mut self, size: T) -> io::Result<()> {
-    //     let size: libc::winsize = size.into().into();
-    //     try_c!(libc::ioctl(self.fd, libc::TIOCSWINSZ as _, &size));
-    //     Ok(())
-    // }
     pub fn set_winsize(&mut self, cols: u16, rows: u16) -> io::Result<()> {
         let winsize = libc::winsize {
             ws_row: rows as _,

@@ -18,6 +18,12 @@ impl Style {
     pub fn with_fg(col_fg: VTColor) -> Style { Style { col_fg, col_bg: VTColor::DefaultBg, rendition: VTRendition::default() } }
     pub fn with_bg(col_bg: VTColor) -> Style { Style { col_fg: VTColor::DefaultFg, col_bg, rendition: VTRendition::default() } }
     pub fn with_rendition(rendition: VTRendition) -> Style { Style { col_fg: VTColor::DefaultFg, col_bg: VTColor::DefaultBg, rendition } }
+
+    fn is_default(&self) -> bool {
+        self.col_fg == VTColor::DefaultFg
+        && self.col_bg == VTColor::DefaultBg
+        && self.rendition | VTRendition::DIRTY == VTRendition::default()
+    }
 }
 
 impl Default for Style {
@@ -99,6 +105,10 @@ impl Cell {
     pub fn col_fg(&self) -> VTColor { self.style.col_fg }
     pub fn col_bg(&self) -> VTColor { self.style.col_bg }
     pub fn rendition(&self) -> VTRendition { self.style.rendition }
+
+    fn is_empty(&self) -> bool {
+        self.as_str() == " " && self.style.is_default()
+    }
 }
 
 impl Default for Cell {
@@ -148,6 +158,11 @@ impl Line {
             .skip(start)
             .take(end.saturating_sub(start))
             .for_each(|c| *c = value.clone());
+    }
+
+    fn is_empty(&self) -> bool {
+        let default_cell = Cell::default();
+        self.cells.iter().all(|cell| cell.is_empty())
     }
 }
 
@@ -367,17 +382,23 @@ impl Screen {
 
         // Resize lines
         if rows < self.size.1 {
-            let diff = self.size.1 - rows;
+            let mut num_remove = self.size.1 - rows;
 
-            // FIXME: try to remove empty lines from back first (?)
+            // Try to remove empty lines from back first
+            while num_remove > 0 && self.lines.back().map_or(false, |line| line.is_empty()) {
+                self.lines.pop_back();
+                num_remove -= 1;
+            }
 
-            for _ in 0 .. diff {
+            // Remove the rest of num_remove lines from the front (if any)
+            for _ in 0 .. num_remove {
                 if let Some(line) = self.lines.pop_front() {
                     self.push_scrollback(line);
                 }
             }
 
-            self.cursor.y = self.cursor.y.saturating_sub(diff);
+            self.cursor.y = self.cursor.y.saturating_sub(num_remove);
+            self.cursor.y = self.cursor.y.min(rows - 1);
 
             // Fix scrolling region if needed
             self.scroll_rg.1 = self.scroll_rg.1.min(rows - 1);
@@ -385,6 +406,11 @@ impl Screen {
         } else if rows > self.size.1 {
             for _ in self.size.1 .. rows {
                 self.lines.push_back(Line::with_size(Cell::with_style(self.cursor.style), cols));
+            }
+
+            // If scrolling region bottom line is the last line, expand it
+            if self.scroll_rg.1 == self.size.1 - 1 {
+                self.scroll_rg.1 = rows - 1;
             }
         }
 
@@ -395,7 +421,10 @@ impl Screen {
                 .for_each(|tab| self.tabs.push(tab));
         }
 
-        self.size = (cols, rows);
+        if self.size != (cols, rows) {
+            self.size = (cols, rows);
+            self.dirty = true;
+        }
     }
 
     pub fn set_dirty(&mut self) {
@@ -507,9 +536,10 @@ impl VTScreen for Screen {
         // If it is at the edge of the scrolling region, peform a scroll up/down instead.
         match (forward, self.cursor.y) {
             (true, y) if y == self.scroll_rg.1 => self.scroll(1),
-            (true, _) => self.cursor.y += 1,
+            (true, y) if y < self.size.1 - 1 => self.cursor.y += 1,
             (false, y) if y == self.scroll_rg.0 => self.scroll(-1),
-            (false, _) => self.cursor.y -= 1,
+            (false, y) if y > 0 => self.cursor.y -= 1,
+            _ => {},
         }
 
         // XXX: Does this do the right thing if cursor is outside the scroll_rg?
